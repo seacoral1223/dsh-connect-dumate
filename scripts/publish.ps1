@@ -108,10 +108,21 @@ if (-not (Test-Path (Join-Path $Root '.git'))) {
 
 # ---------- 5) 推送 ----------
 & $git branch -M main 2>$null
-$hasRemote = & $git remote get-url origin 2>$null
-if (-not $hasRemote) {
+# 用 `git remote` 列名字判断，不用 `remote get-url`：后者在 origin 不存在时会往 stderr 写错误，
+# PowerShell 5.1 配 $ErrorActionPreference='Stop' 会把它当异常抛出来，脚本直接断在这里。
+$remotes = @(& $git remote 2>$null)
+if ($remotes -notcontains 'origin') {
   & $git remote add origin ($repoWeb + '.git')
   Write-Host '  ok  已关联 origin'
+} elseif ((& $git remote get-url origin) -ne ($repoWeb + '.git')) {
+  Write-Host ''
+  Write-Host '[停] 已有 origin，但指向别处：' -ForegroundColor Yellow
+  Write-Host ('      现在: ' + (& $git remote get-url origin))
+  Write-Host ('      期望: ' + $repoWeb + '.git')
+  Write-Host '      确认无误就手打 git remote set-url origin <期望地址>，再重跑。'
+  exit 1
+} else {
+  Write-Host '  ok  origin 已指向正确地址'
 }
 Write-Host '  ..  推送中（会弹 GitHub 登录，这一步只能你本人认证）'
 & $git push -u origin main
