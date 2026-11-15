@@ -2,88 +2,72 @@
 
 这份文件不在 `package.json` 的 `files` 白名单里，所以不会随 tarball 发出去。
 
-## 现在这台机器的事实（2026-11-15 实测）
+## 当前通道：GitHub
 
-| 项 | 状态 |
-| --- | --- |
-| `npm ping` | **通**，PONG 886ms（走本机代理策略，能到 registry.npmjs.org） |
-| `npm publish --dry-run` | **exit 0** —— 结构上现在就能发，24 个文件 |
-| `npm whoami` | **未登录**（ENEEDAUTH），`~/.npmrc` 不存在 |
-| registry 上的名字 | `dsh-connect-dumate` **404 = 空着**，可以占（也意味着有被抢注风险） |
-| git | **Windows 侧没装**（四个常见位置都没有）；`winget` 可用 |
-| 项目仓库 | 没有 `.git` |
+这个插件**通过 GitHub tag 分发**，不走 npm。原因不是省事，是 npm 的发布凭据政策正在变动 —— 页面横幅原文（2026-11 实测）：
 
-## 只有你能提供的三样
+> *npm tokens that bypass 2FA are being restricted — account changes (Aug 2026) and direct publishing (Jan 2027).*
 
-1. **npm 账号**（没有就去 https://www.npmjs.com/signup 注册，邮箱要验证）。
-2. **GitHub 仓库地址 + 署名**，用来填 `package.json` 的 `repository` / `homepage` / `author` / `bugs`。
-   这三项**不是发布的必要条件**（现在没有也能发），但对一个读登录态的插件来说，「源码在哪、谁写的」是别人敢装的前提。我不替你编 URL。
-3. **2FA 决定**：npm 近年收紧了发布凭据（有资料说经典 token 已吊销、发布要求 2FA 或走 Trusted Publishing），但**我没有权威来源可确认当前政策** —— 两篇相关文档都被 Cloudflare 验证页挡住。所以别照我这句话行动，**去 npm 网页后台 → Account → Publishing Access 自己看一眼当前要求**，再决定用 `npm login` 还是别的通道。
+「建个带 bypass 权限的 token 然后命令行发布」这条路 **2027 年 1 月就要关掉**。GitHub 不受它影响，而且本机不需要留任何长期凭据。
 
-## 最短路径：一个脚本
+### 发版
 
 ```powershell
-cd <项目目录>\projects\dsh-connect-dumate
-.\scripts\publish.ps1
+cd <项目目录>
+npm test                                    # 12 个回归，不过就别发
+# 改 package.json 的 version 与 CHANGELOG.md，然后：
+git add -A
+git commit -m "release: vX.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push ; git push --tags
 ```
 
-它会按顺序检查并**在该你出手的地方停下来**（不是报错退出，是打印下一步该做什么）：
+GitHub 会**自动**为 tag 生成源码包，不用手动上传 release 资产。
 
-1. Git 在不在（不在就给三个安装选项 —— 我这侧试过 winget，下载被网络策略卡住了）
-2. git 提交署名配了没（并提醒邮箱会公开，可用 GitHub noreply 地址）
-3. GitHub 仓库存在没（不存在就给填好名字的创建链接，并提醒三个勾都不要打）
-4. `git init` + `add` + 首次提交 —— **并且会检查 `AGENTS.md` 有没有被 staged，有就拒绝提交**
-5. 关联 origin + 推送（GitHub 认证只能你本人）
-6. 发布前自检 `npm run publish:check`
-7. `npm login`（没登录就停下告诉你命令）→ `npm publish`
-8. 回查 registry 确认收录
+### 别人怎么装
 
-## 发布前自检查什么（`npm run publish:check`）
+```
+https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/vX.Y.Z
+```
 
-`scripts/precheck.mjs`，18 项：元数据齐不齐、**repository 指向的 GitHub 仓库是不是真的存在**（404 就拦，发出去的包不能指着空地址）、仓库名与包名是否一致、npm 登录状态、**这个版本号有没有被发过**（发过的不能覆盖）、12 个回归、tarball 清单、`AGENTS.md`/`scripts/` 不在包里、以及包内容逐文件比对本机隐私值。
+下载 → 解压 → DSH 的插件管理里 **Plugins → Add plugin** 选那个目录 → **重启 DSH**。
+（`npm i -g` 那种写法没用：全局安装不会把 bundle 注册进 DSH 的 profile。）
 
-两处刻意的设计，别改回去：
+### 发完必须自证
+
+把刚推的 tag 包下载到一个**空目录**、给一个**空的 `DSH_HOME`** 跑 `npm test`。这一步抓出过两次真问题：
+
+- 用例依赖真机状态文件当素材 → 在别人机器上要么 FAIL 要么静默 SKIP（等于没测）；
+- 会发布的测试文件里，注释写了本机用户名与 handle 的字面值 → 隐私扫描报得对。
+
+## 发布前自检
+
+```powershell
+npm run publish:check     # 元数据 + GitHub 仓库是否真存在 + 版本是否被发过 + 12 回归 + 隐私扫描
+npm run pack:check        # 看 tarball 到底有哪些文件
+```
+
+`prepublishOnly` 挂着 `npm run check`，所以 `npm publish` 也会自己拦一道。三处刻意的设计，别改回去：
 
 - **取不到 tarball 清单就直接停**，不继续往下跑 —— 否则「包里必须有 X」「没有隐私值」在空列表下会全部自动通过，那是假绿灯。
-- `package.json` 的 `author`/`repository`/`homepage`/`bugs` 是**身份字段**，允许出现你的 handle（本来就该写）；其余字段出现本机值才算泄漏。一刀切禁止会逼人删掉署名，把检查变成噪音。
+- ASCII 标识**整词匹配**：本机用户名常常是合法 handle 的前缀，按子串匹配会把分发地址与署名报成泄漏；误报的害处不是烦，是逼人关掉检查。中文昵称没有词边界，仍按子串。
+- 扫描范围 = **tarball 范围**（`files` 展开），不是仓库全部文件。把不发布的内部笔记算进判定只会制造假失败，诱导人绕过扫描器。
 
-## 手动流程（脚本之外的等价步骤）
+## 如果将来要走 npm
 
-```powershell
-cd <项目目录>\projects\dsh-connect-dumate
-
-# 1) 没有账号先注册：https://www.npmjs.com/signup（邮箱要点验证）
-# 2) 登录（会开浏览器）
-& "C:\Program Files\nodejs\npm.cmd" login
-& "C:\Program Files\nodejs\npm.cmd" whoami     # 确认身份，输出你的用户名
-
-# 3) 发
-& "C:\Program Files\nodejs\npm.cmd" publish
-```
-
-## 想要 GitHub 仓库（可选，但建议）
-
-```powershell
-winget install --id Git.Git -e --source winget
-# 装完重开终端
-git --version
-```
-
-或者直接用你 Ubuntu 那边（双系统，工作区在 Windows 分区，挂载即可）：
-
-```bash
-cd <挂载点>/…/default-workspace/projects/dsh-connect-dumate
-git init && git add -A && git commit -m "dsh-connect-dumate v0.8.0"
-```
-
-**推之前必须确认**：`AGENTS.md`（内部逆向笔记、真实账号昵称、`tmp/dumate/*` 探测记录）会被 git 收进去，而它不在 npm 白名单里 —— 公开仓库要加 `.gitignore` 把它和 `tmp/`、`*.tgz` 排除。这一步我不能替你决定要不要公开这些笔记。
+1. **先开 2FA**（验证器 App）。别指望 bypass token，那条正在被关。
+2. 长期方案是 **Trusted Publishing (OIDC)**：由 GitHub Actions 发布，账号里不存 token。npm 文档有专门一页 "Trusted publishing with OIDC"。
+3. 注册邮箱**不要用私人邮箱** —— npm 的 `maintainers` 字段公开邮箱，`npm view <pkg> maintainers` 谁都能查（同类插件的 QQ/163 邮箱现在就是裸着的）。
+4. `npm login --auth-type=legacy` 拿到的是**会话 token**，它**不出现在网页 Access Tokens 列表里**，所以那个页面撤不掉它；要作废只能改密码（`npm logout` 只删本机文件，服务端不撤销）。
+5. 版本号发出去不能覆盖重发；发错只能 `npm deprecate`，或 72 小时内 `npm unpublish`。所以有问题就发 `X.Y.Z+1`，别改 tag。
 
 ## 版本纪律
 
-- 每次改动**先跑 `npm test`**（11 个），再决定版本号：修 bug 补 patch，加能力补 minor。
-- 发布过的版本号不能覆盖重发（npm 不允许），发错了只能 `npm deprecate` 或 `npm unpublish`（有 72 小时窗口）。
-- 改完代码后本地用户**只需重启 DSH**（link 安装），不用重装。
+- 每次改动先 `npm test`（12 个），再决定版本号：修 bug 补 patch，加能力补 minor。
+- **不移动已发布的 tag** —— 那会让同一个下载地址悄悄变成不同内容。要改就升版本、打新 tag。
+- 本地开发时插件是 link 安装，改完代码**重启 DSH 即可**，不用反复重装。
 
-## 装别人的包时（顺带记一句）
+## 卸载/停用要提醒用户的两条
 
-`npm i -g` 装不进 DSH —— 全局安装不会注册进 profile。正确路径是插件管理里的 **Plugins → Add plugin**（本地目录）或按包名安装（已发布）。
+1. **先把 DSH 的默认模型从 `dumate/*` 切走**再移除插件 —— 否则 `agent-default-model` 会留下指向已消失 provider 的幽灵条目，导致每次启动加载失败。
+2. 插件只写 `~/.dsh/dumate-state.json` 与 `~/.dsh/dumate-cookies.key`，卸载不会自动清；想彻底清空就手工删这两个文件。
