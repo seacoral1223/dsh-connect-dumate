@@ -1,6 +1,6 @@
 # 回归测试
 
-**十五个**，都不需要 DSH 进程：假 ctx 按 cordis 语义跑 effect、假 SSE 服务、假 HTTP 状态码、假 React（能翻状态、递归渲染子组件、把控件全点一遍）。`coldstart` 与 `lifecycle` 会真连一次网关读目录，离线时退到兜底并通过。
+**十七个**，都不需要 DSH 进程：假 ctx 按 cordis 语义跑 effect、假 SSE 服务、假 HTTP 状态码、假 React（能翻状态、递归渲染子组件、把控件全点一遍）。`coldstart` 与 `lifecycle` 会真连一次网关读目录，离线时退到兜底并通过。
 
 一条命令跑全部：**`npm test`**。`npm run check` = 语法检查 + 全部；`npm run publish:check` 再叠加元数据 / GitHub 仓库存在性 / 版本重复 / 隐私 / 发布完整性。`prepublishOnly` 挂的是 `npm run check` —— **回归不过就发不出去**，这是刻意的。
 
@@ -14,6 +14,8 @@
 | `coldstart.test.mjs` | 第一次网络刷新还在飞的时候问 `listModels()`：必须当场交出非空目录（走缓存 ~1ms；缓存清空后 ≤3s） |
 | `fresh-machine.test.mjs` | 没装 App + 状态文件不存在 + `inspect()` 强制抛 → 仍有模型可列、`resolveModel` 不抛。因为宿主 `buildModelCatalog` 会把零模型或抛错的 provider **整组隐藏** |
 | `foreign-machine.test.mjs` | 五种残缺环境（目录不存在 / `auth.json` 非法 / 无账号档 / `.cookie-key` 长度错 / 密文解不开）+ 完全没装搭子：都不崩、都有目录、**错误文案必须是能照着做下一步的人话** |
+| `version-fence.test.mjs` | **版本围栏**：`engines.dsh` 与 `dsh.compatibility.dsh` 必须一致；收 0.2.2–0.2.x（含 rc），拒 `0.3.0-alpha.1`/`0.3.0-rc.1`/`0.3.0`/更老线。宿主门禁用 `includePrerelease:true`，上界少写 `-0` 就会放行整条未验证的线 |
+| `save-rollback.test.mjs` | **写入失败不许给假确认**：把状态文件设成只读，跑勾选 / 旋钮 / 命名三条写路径 → 必须报失败、**内存按磁盘还原**、且失败的改动不会被下一次成功写入顺带落盘 |
 | `client-structure.test.mjs` | 假 React 起 `client.js`：三个座位都注册、`settings.section.icon` 的 id 与分栏 id 一致（不一致宿主不画图标）、五个分栏在空数据与真实形状数据下各渲染一遍、**把每个分栏的按钮/勾选全点一遍**（46 个控件）、登录 UI 不许回填 Cookie 值、disposer 可跑。另含 **i18n 完整性**：COPY 之外不许有中文字面量、zh/en 键集相等、引用键都有译文、不留死键 |
 | `pill-visibility.test.mjs` | 把 `client.js` 里 `GATE-START/END` 标记块**原样抠出来**跑 10 个用例：`next` 优先于 `lastUsed`、别的 provider 一律不出现、空投影 / 空串 / 非字符串都不出现。测的是浏览器实际跑的那段代码，不是副本 |
 | `defaults.test.mjs` | 「推荐（按后端去重）」：**素材自己造 + 把 fetch 桩成失败**（不依赖任何机器状态），五个 id 落同一后端 → 只留一行、独占后端不误伤、路由档位全关、幂等、批量改动后必须无条件广播 `llm/models-updated`；诊断表启用数必须现算 |

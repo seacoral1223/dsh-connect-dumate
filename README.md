@@ -44,9 +44,9 @@
 
 ```powershell
 # 1) 下载并解压
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.9
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.10
 tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
-# 解压出来是目录 dsh-connect-dumate-0.9.9
+# 解压出来是目录 dsh-connect-dumate-0.9.10
 ```
 
 2) 打开 DSH 的插件管理（**Plugins → Add plugin**），选那个解压出来的目录。
@@ -55,12 +55,12 @@ tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
 **B. git clone**
 
 ```bash
-git clone --branch v0.9.9 https://github.com/seacoral1223/dsh-connect-dumate.git
+git clone --branch v0.9.10 https://github.com/seacoral1223/dsh-connect-dumate.git
 ```
 
 然后同样在 **Plugins → Add plugin** 里选这个目录，重启。
 
-> 装完可以自己在目录里跑 `npm test`（**15 个回归**）验证包是完整的。其中 `coldstart` / `lifecycle` / `manual-login` / `disabled` 会真连一次搭子上游（读目录、换 token、对照组发请求），其余全部离线；所有用例会先把 `DSH_HOME` 隔离到临时目录，**不会改你的账号数据与勾选**。
+> 装完可以自己在目录里跑 `npm test`（**17 个回归**）验证包是完整的。其中 `coldstart` / `lifecycle` / `manual-login` / `disabled` 会真连一次搭子上游（读目录、换 token、对照组发请求），其余全部离线；所有用例会先把 `DSH_HOME` 隔离到临时目录，**不会改你的账号数据与勾选**。
 
 装好之后你应该看到：
 

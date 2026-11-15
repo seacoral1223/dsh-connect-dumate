@@ -88,10 +88,28 @@ function cookieKey() {
   return k;
 }
 
+/**
+ * toggles 的**唯一形状**。
+ * 原先 loadToggles 的 catch 分支只返回七个键，少了 mode / pollIntervalMs / autoCheckIn 等旋钮 ——
+ * 于是「首次运行或状态文件损坏」时 `before = {...toggles}` 里根本没有这些键，
+ * 写失败后的 `Object.assign(toggles, before)` 恢复不了它们：改动照样留在内存里，
+ * 界面显示新值、重启弹回，更糟的是下一次成功写入会把这次「已失败」的改动一起写进盘。
+ */
+function defaultToggles() {
+  return {
+    disabledModels: [], routerEnabled: [], imageInput: {}, displayNames: {}, realNames: {},
+    lastCatalog: [], catalogAt: 0,
+    mode: null, pollIntervalMs: null, activeProfileId: null,
+    autoCheckIn: false, lastAutoCheckInDate: null,
+    manualCookiesCipher: null, manualCookiesAt: 0, manualCookieNames: [], authSource: null,
+  };
+}
+
 function loadToggles() {
   try {
     const raw = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
     return {
+      ...defaultToggles(),
       disabledModels: Array.isArray(raw.disabledModels) ? raw.disabledModels : [],
       // 自动路由别名（dm-auto-model/*）默认不进选择器，勾了才进
       routerEnabled: Array.isArray(raw.routerEnabled) ? raw.routerEnabled : [],
@@ -115,20 +133,56 @@ function loadToggles() {
       authSource: AUTH_SOURCES.has(raw.authSource) ? raw.authSource : null,
     };
   } catch {
-    return { disabledModels: [], routerEnabled: [], imageInput: {}, displayNames: {}, realNames: {}, lastCatalog: [], catalogAt: 0 };
+    return defaultToggles();
   }
 }
 
+/** 只比用户真正会改的那几项 —— lastCatalog 之类缓存不参与"是否落盘"的判定。 */
+const COMMITTED_KEYS = ["disabledModels", "routerEnabled", "imageInput", "displayNames",
+  "mode", "pollIntervalMs", "activeProfileId", "autoCheckIn",
+  "manualCookiesCipher", "manualCookieNames", "authSource"];
+
 function saveToggles(toggles) {
   const file = stateFile();
+  // 失败时的统一处理：**把内存拉回磁盘的真实内容**。
+  // 单点做这件事而不是在 11 个调用点各写一遍回滚 —— 那种写法一定会漏一处，
+  // 而漏掉的那处就是「界面显示新值、重启弹回、下一次成功写入把失败改动一起写进去」。
+  // 磁盘读不到时**不回滚**：那等于用一次写失败顺手把用户的内存态也清空。
+  const revert = () => {
+    try {
+      const onDisk = JSON.parse(fs.readFileSync(file, "utf8"));
+      Object.assign(toggles, defaultToggles(), onDisk);
+      return true;
+    } catch { return false; }
+  };
+  const fail = error => {
+    const reverted = revert();
+    return {
+      ok: false, file: tidyPath(file),
+      error: tidyText(String(error ?? "")),
+      reverted,
+      // 回滚不成功时必须说清楚：现在内存和磁盘是分开的
+      ...(reverted ? {} : { warning: "写入失败，且无法从磁盘回读 —— 当前界面显示的是没保存成功的状态，重启后会回到磁盘上的旧内容" }),
+    };
+  };
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(toggles, null, 2), "utf8");
     fs.renameSync(tmp, file);
+    // **写完回读校验**（照 dsh-connect-workbuddy 的做法）。
+    // 光看 writeFileSync 不抛不等于落盘成功：Windows 上杀毒软件 / OneDrive / 打开着的编辑器
+    // 会短暂锁住文件，重试耗尽后写入失败**不会**报错。不回读就会给出一个
+    // 「旧选择默默反驳新选择」的假确认 —— 用户看到"已保存"，重启发现没保存。
+    const back = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const k of COMMITTED_KEYS) {
+      if (JSON.stringify(back?.[k] ?? null) !== JSON.stringify(toggles?.[k] ?? null)) {
+        return fail(`${k} 写入后回读不一致`);
+      }
+    }
     return { ok: true, file: tidyPath(file) };
   } catch (error) {
-    return { ok: false, file: tidyPath(file), error: tidyText(String(error?.message ?? error)) };
+    return fail(error?.message ?? String(error));
   }
 }
 
@@ -728,7 +782,9 @@ export function apply(ctx, config = {}) {
       else rejected.push(`登录方式只认 ${[...AUTH_SOURCES].join(" / ")}，收到「${String(patch.authSource).slice(0, 24)}」没有应用`);
     }
     const saved = saveToggles(toggles);
-    if (!saved.ok) { Object.assign(toggles, before); return { ok: false, error: saved.error }; }
+    // 不在这里手工回滚：saveToggles 失败时会自己按磁盘内容还原内存（且只在读得到磁盘时还原）。
+    // 原先这里 `Object.assign(toggles, before)` 看着像回滚，但 before 是浅拷贝且缺键时救不回来。
+    if (!saved.ok) return { ok: false, error: saved.error, warning: saved.warning };
     // 改了账号档或通道 = 手上的数据全部作废，强制重读
     if (before.activeProfileId !== toggles.activeProfileId || before.mode !== toggles.mode) {
       runtime.channelAt = 0; runtime.creditAt = 0;
