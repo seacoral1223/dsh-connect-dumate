@@ -242,7 +242,7 @@ assert.ok(openedJson.includes("common.loading") || openedJson.includes("credits.
 const richState = { ok: true, account: "测试账号", credit: { available: 1234.5, consumed24h: 1, consumed7d: 2, packages: [], bonus: { todaySigned: false } }, models: [], profiles: [] };
 const viewRich = renderer(pill.Component, pillProps, { 3: richState, 6: true });
 const richTree = JSON.stringify(viewRich.render());
-assert.ok(richTree.includes("credits.refresh"), "有数据时面板该有刷新按钮");
+assert.ok(richTree.includes("panel.refresh"), "有数据时面板该有刷新按钮");
 assert.ok(richTree.includes("1,234.5"), "面板该把余额渲染出来");
 
 // 再点关闭，也要不抛
@@ -290,6 +290,46 @@ for (const [key] of Object.entries(tabKeys).map(([n, k]) => [k, n])) {
   }
   assert.ok(!threw, `${key} 分栏点控件时抛了：${threw?.message}`);
   console.log(`  ok   分栏 ${key}：${handlers.length} 个交互控件全部点过，无抛出`);
+}
+
+// --- i18n 完整性（这条抓过一次真 bug：胶囊面板整块硬写中文，
+// 于是英文界面下设置页是英文、点开胶囊却全是中文 —— 半截翻译比整页中文更糟）
+{
+  const lines = src.split(/\r?\n/);
+  const start = lines.findIndex(l => /^\s*const COPY = \{/.test(l));
+  let end = -1;
+  for (let i = start + 1; i < lines.length; i++) if (/^ {4}\};$/.test(lines[i])) { end = i; break; }
+  assert.ok(start > 0 && end > start, "找不到 COPY 块边界，这条检查等于没跑");
+  const hardCoded = [];
+  lines.forEach((l, i) => {
+    if (i >= start && i <= end) return;
+    const t = l.trim();
+    if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return;
+    if (/(["'`])([^"'`\n]*[\u4e00-\u9fa5][^"'`\n]*)\1/.test(l) || /`[^`$]*[\u4e00-\u9fa5]/.test(l)) hardCoded.push(`L${i + 1}`);
+  });
+  assert.equal(hardCoded.length, 0, `COPY 之外硬写了中文的行：${hardCoded.join(", ")} —— 英文界面下会露出中文`);
+
+  // zh / en 键集必须完全一致，且代码引用的键两份都有
+  const blockOf = lang => {
+    const s = src.indexOf(`      ${lang}: {`);
+    assert.ok(s > 0, `找不到 ${lang} 块`);
+    let depth = 0, i = src.indexOf("{", s);
+    const from = i;
+    for (; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}") { depth--; if (depth === 0) break; }
+    }
+    return new Set([...src.slice(from, i).matchAll(/"([^"]+)"\s*:/g)].map(m => m[1]));
+  };
+  const zh = blockOf("zh"), en = blockOf("en");
+  assert.deepEqual([...zh].filter(k => !en.has(k)), [], `只在 zh 有的键：${[...zh].filter(k => !en.has(k))}`);
+  assert.deepEqual([...en].filter(k => !zh.has(k)), [], `只在 en 有的键：${[...en].filter(k => !zh.has(k))}`);
+  const used = [...new Set([...src.matchAll(/\bt\("([^"]+)"\)/g)].map(m => m[1]))];
+  assert.deepEqual(used.filter(k => !zh.has(k)), [], `引用了但没有译文的键：${used.filter(k => !zh.has(k))}`);
+  // 定义了却没人用的键也要报 —— 它是「文案改了、界面没跟上」的信号
+  const dead = [...zh].filter(k => !used.includes(k) && !k.startsWith("nav."));
+  assert.deepEqual(dead, [], `定义了但界面没用到的键（要么用上要么删）：${dead.join(", ")}`);
+  console.log(`  ok   i18n：COPY 之外零硬写中文，zh/en 各 ${zh.size} 键对齐，${used.length} 个引用全有译文，无死键`);
 }
 
 // --- 卸载

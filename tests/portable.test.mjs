@@ -268,9 +268,11 @@ const fetches = [...clientText.matchAll(/fetch\(\s*(["'`])([^"'`]+)\1/g)].map(m 
 check("客户端所有 fetch 都是同源相对路径", fetches.length > 0 && fetches.every(u => u.startsWith("/api/")), fetches.join(" , "));
 check("客户端不直接请求上游域名", !/fetch\([^)]*(dumate-svc|console\.bce)/.test(clientText));
 // 面板读的键名必须和宿主写的键名一致，否则界面永远显示占位符
-const hostKeys = [...indexText.matchAll(/consumed(\w+)/g)].map(m => m[1]);
-const clientKeys = [...clientText.matchAll(/consumed(\w+)/g)].map(m => m[1]);
-check("宿主与客户端的消耗字段名一致", hostKeys.length > 0 && clientKeys.every(k => hostKeys.includes(k)), `宿主=${[...new Set(hostKeys)]} 客户端=${[...new Set(clientKeys)]}`);
+// 只比**数据字段**（credit.consumedXxx），不比文案键 —— 文案键里也有 consumed24 这种名字，
+// 早先按 `consumed(\w+)` 全局匹配会把 t("panel.consumed24") 也算成字段，报出假不一致。
+const hostKeys = [...new Set([...indexText.matchAll(/credit\.consumed(\w+)|consumed(\w+):\s/g)].map(m => m[1] ?? m[2]).filter(Boolean))];
+const clientKeys = [...new Set([...clientText.matchAll(/credit\.consumed(\w+)/g)].map(m => m[1]))];
+check("宿主与客户端的消耗字段名一致", hostKeys.length > 0 && clientKeys.every(k => hostKeys.includes(k)), `宿主=${hostKeys} 客户端=${clientKeys}`);
 
 for (const w of warns) console.log(`  待补 ${w}`);
 console.log(bad ? `\nFAIL：${bad} 项不过` : `\nPASS：跨平台 / 隐私（不跳过任何文件）/ 发布完整性全过${warns.length ? `，另有 ${warns.length} 项待补` : ""}`);

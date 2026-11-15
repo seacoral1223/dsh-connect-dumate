@@ -107,6 +107,38 @@ window.__ModuleLoader__.load({
         "doctor.copied": "已复制",
         "common.error": "读数失败",
         "common.loading": "读取中…",
+        // 面板与零散标签：原先硬写成中文，导致英文界面下设置页是英文、点开胶囊却全是中文
+        "panel.account": "账号",
+        "panel.available": "可用积分",
+        "panel.consumed24": "24 小时消耗",
+        "panel.consumed7d": "7 天消耗",
+        "panel.signed": "今日已签到",
+        "panel.unsigned": "今日未签到",
+        "panel.claim": "领取今日签到",
+        "panel.refresh": "刷新",
+        "panel.channelGateway": "通道：云端模型网关（搭子 App 不用开着）",
+        "panel.channelLocal": "通道：本机搭子代理",
+        "panel.channelNone": "两条通道都不通",
+        "panel.tokenLeft": "网关 token 剩",
+        "panel.tokenMinutes": "分钟",
+        "panel.expiringSoon": "三天内过期",
+        "panel.bonusTotal": "累计",
+        "panel.bonusTimes": "次",
+        "panel.bonusPoints": "分",
+        "panel.noProfile": "本机没有账号档",
+        "panel.channelUnavailable": "通道不可用",
+        "models.colModel": "模型",
+        "models.leaveEmpty": "留空 =",
+        "cap.currentChannel": "当前通道",
+        "cap.none": "无",
+        "poll.m1": "1 分钟",
+        "poll.m5": "5 分钟",
+        "poll.m10": "10 分钟",
+        "poll.m30": "30 分钟",
+        "poll.h1": "60 分钟",
+        "panel.daysLeft": "天",
+        "panel.tooltipReady": "百度搭子积分",
+        "panel.tooltipPrefix": "百度搭子",
 
       },
       en: {
@@ -196,6 +228,37 @@ window.__ModuleLoader__.load({
         "doctor.copied": "Copied",
         "common.error": "Read failed",
         "common.loading": "Loading…",
+        "panel.account": "Account",
+        "panel.available": "Available credits",
+        "panel.consumed24": "Spend (24h)",
+        "panel.consumed7d": "Spend (7d)",
+        "panel.signed": "Checked in today",
+        "panel.unsigned": "Not checked in today",
+        "panel.claim": "Claim daily check-in",
+        "panel.refresh": "Refresh",
+        "panel.channelGateway": "Channel: cloud model gateway (app can stay closed)",
+        "panel.channelLocal": "Channel: local app proxy",
+        "panel.channelNone": "Neither channel is reachable",
+        "panel.tokenLeft": "gateway token left",
+        "panel.tokenMinutes": "min",
+        "panel.expiringSoon": "Expiring within 3 days",
+        "panel.bonusTotal": "Total",
+        "panel.bonusTimes": "times",
+        "panel.bonusPoints": "pts",
+        "panel.noProfile": "No account profile on this machine",
+        "panel.channelUnavailable": "Channel unavailable",
+        "models.colModel": "Model",
+        "models.leaveEmpty": "Empty =",
+        "cap.currentChannel": "Current channel",
+        "cap.none": "none",
+        "poll.m1": "1 min",
+        "poll.m5": "5 min",
+        "poll.m10": "10 min",
+        "poll.m30": "30 min",
+        "poll.h1": "60 min",
+        "panel.daysLeft": "d",
+        "panel.tooltipReady": "DuMate credits",
+        "panel.tooltipPrefix": "Baidu DuMate",
 
       },
     };
@@ -206,7 +269,7 @@ window.__ModuleLoader__.load({
     };
     const fmtDate = sec => {
       const s = Number(sec);
-      if (!s || s > 4102444800) return "长期";
+      if (!s || s > 4102444800) return "";
       const d = new Date(s * 1000);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     };
@@ -396,7 +459,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { ...style.hint, marginTop: 6 } }, t("login.storage"))),
         // ---- 账号档 ----
         h("div", { style: style.hint }, t("accounts.hint")),
-        profiles.length === 0 ? h("div", { style: style.small }, state?.reasons?.join("；") || "本机没有账号档") : null,
+        profiles.length === 0 ? h("div", { style: style.small }, state?.reasons?.join("；") || t("panel.noProfile")) : null,
         profiles.map(p => {
           const acc = rowOf(p.profileId);
           const selected = p.selected || (!state?.profiles.some(q => q.selected) && p.active);
@@ -421,7 +484,7 @@ window.__ModuleLoader__.load({
         }),
         h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
           h("button", { style: style.btnPrimary, disabled: busy || !profiles.length, onClick: () => run({ action: "accounts" }, false) },
-            accounts ? t("credits.refresh") : t("accounts.read")),
+            busy ? t("accounts.reading") : (accounts ? t("credits.refresh") : t("accounts.read"))),
           accounts?.at ? h("span", { style: { ...style.small, alignSelf: "center" } }, new Date(accounts.at).toLocaleTimeString("zh-CN")) : null));
     }
 
@@ -433,11 +496,13 @@ window.__ModuleLoader__.load({
         error ? h("div", { style: { ...style.small, color: "var(--dsh-alias-danger, #d33)", marginBottom: 8 } }, `${t("common.error")}：${error}`) : null,
         !credit ? h("div", { style: style.small }, t("common.loading")) : h("div", null,
           h("div", { style: style.section },
-            h("div", { style: style.row }, h("span", { style: style.label }, credit.account), h("span", { style: style.big }, num(credit.available))),
+            h("div", { style: style.row }, h("span", { style: style.label }, t("panel.account")), h("span", null, credit.account || "—")),
+            h("div", { style: { ...style.row, fontSize: 20, fontWeight: 700 } },
+              h("span", { style: style.label }, t("credits.available")), h("span", null, num(credit.available))),
             h("div", { style: style.row }, h("span", { style: style.label }, t("credits.24h")), h("span", null, num(credit.consumed24h))),
             h("div", { style: style.row }, h("span", { style: style.label }, t("credits.7d")), h("span", null, num(credit.consumed7d))),
             credit.expiringSoon?.length ? h("div", { style: { ...style.row, color: "var(--dsh-alias-warning, #b8860b)" } },
-              h("span", null, "三天内过期"), h("span", null, credit.expiringSoon.map(p => `${num(p.remain)}（${p.daysLeft} 天）`).join("、"))) : null),
+              h("span", null, t("panel.expiringSoon")), h("span", null, credit.expiringSoon.map(p => `${num(p.remain)}（${p.daysLeft} ${t("panel.daysLeft")}）`).join("、"))) : null),
           h("div", { style: style.section },
             h("div", { style: style.sectionTitle }, t("credits.packages")),
             (credit.packages ?? []).map(p => h("div", { key: p.packageId, style: style.row },
@@ -446,7 +511,7 @@ window.__ModuleLoader__.load({
           h("div", { style: style.section },
             h("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
               h("strong", null, credit.bonus ? (credit.bonus.todaySigned ? t("credits.bonus.signed") : t("credits.bonus.unsigned")) : t("common.loading")),
-              credit.bonus ? h("span", { style: style.small }, `累计 ${credit.bonus.totalTimes} 次 / ${num(credit.bonus.totalPoints)} 分`) : null,
+              credit.bonus ? h("span", { style: style.small }, `${t("panel.bonusTotal")} ${credit.bonus.totalTimes} ${t("panel.bonusTimes")} / ${num(credit.bonus.totalPoints)} ${t("panel.bonusPoints")}`) : null,
               h("span", { style: { flex: 1 } }),
               credit.bonus?.todaySigned ? null : h("button", { style: style.btnPrimary, disabled: busy, onClick: () => run({ action: "claim" }, false) }, t("credits.bonus.claim"))),
             h("div", { style: { ...style.hint, marginTop: 6 } }, t("credits.bonus.note"))),
@@ -473,7 +538,7 @@ window.__ModuleLoader__.load({
         models.length === 0 ? h("div", { style: style.small }, "—") : null,
         h("div", { style: style.section },
           h("div", { style: { ...style.modelRow, ...style.small, fontWeight: 650 } },
-            h("span", null, t("models.enabled")), h("span", null, "模型"), h("span", null, t("models.ctx")), h("span", null, t("models.image")), h("span", null, t("models.name"))),
+            h("span", null, t("models.enabled")), h("span", null, t("models.colModel")), h("span", null, t("models.ctx")), h("span", null, t("models.image")), h("span", null, t("models.name"))),
           models.map(m => h("div", { key: m.key, style: style.modelRow },
             h("input", { type: "checkbox", checked: m.enabled, onChange: () => run({ action: "model", key: m.key, enabled: !m.enabled }) }),
             // 主名已经是「真实模型名 (中转站 id)」，不再另打一遍 key
@@ -485,7 +550,7 @@ window.__ModuleLoader__.load({
               // 输入框只放「你自己起的覆盖名」；上游给的名字走文字，不混进可编辑框
               h("input", {
                 style: style.input,
-                placeholder: m.nameSource === "override" ? "" : `留空 = ${m.displayName}`,
+                placeholder: m.nameSource === "override" ? "" : `${t("models.leaveEmpty")} ${m.displayName}`,
                 defaultValue: m.nameSource === "override" ? m.displayName : "",
                 onBlur: e => { const value = e.target.value.trim(); const current = m.nameSource === "override" ? m.displayName : ""; if (value !== current) run({ action: "name", key: m.key, displayName: value }); },
               }),
@@ -505,13 +570,13 @@ window.__ModuleLoader__.load({
             h("option", { value: "auto" }, t("cap.mode.auto")),
             h("option", { value: "gateway" }, t("cap.mode.gateway")),
             h("option", { value: "local" }, t("cap.mode.local"))),
-          h("div", { style: { ...style.hint, marginTop: 6 } }, `当前通道：${state?.channelKind ?? "无"} · ${state?.baseURL ?? "-"}`)),
+          h("div", { style: { ...style.hint, marginTop: 6 } }, `${t("cap.currentChannel")}：${state?.channelKind ?? t("cap.none")} · ${state?.baseURL ?? "-"}`)),
         h("div", { style: style.section },
           h("div", { style: style.sectionTitle }, t("cap.poll")),
           h("select", {
             style: style.select, value: String(poll), disabled: busy,
             onChange: e => run({ action: "knobs", pollIntervalMs: Number(e.target.value) }, false),
-          }, [[60000, "1 分钟"], [300000, "5 分钟"], [600000, "10 分钟"], [1800000, "30 分钟"], [3600000, "60 分钟"]]
+          }, [[60000, t("poll.m1")], [300000, t("poll.m5")], [600000, t("poll.m10")], [1800000, t("poll.m30")], [3600000, t("poll.h1")]]
             .map(([ms, label]) => h("option", { key: ms, value: String(ms) }, label)))),
         h("div", { style: style.section },
           h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
@@ -559,7 +624,7 @@ window.__ModuleLoader__.load({
         h("div", { style: style.h1 }, t("page.title")),
         h("div", { style: style.sub }, t("page.subtitle")),
         state && !state.ok ? h("div", { style: { ...style.section, borderColor: "var(--dsh-alias-warning, #d8a13a)" } },
-          h("div", { style: { fontWeight: 650 } }, state.reasons?.[0] || "通道不可用"),
+          h("div", { style: { fontWeight: 650 } }, state.reasons?.[0] || t("panel.channelUnavailable")),
           h("div", { style: style.hint }, state.reasons?.slice(1).join("；") || "")) : null,
         h("div", { style: style.tabs }, tabs.map(([key, label]) => h("div", { key, style: style.tab(tab === key), onClick: () => setTab(key) }, label))),
         tab === "accounts" ? h(AccountsTab, { t, state, busy, run }) : null,
@@ -589,27 +654,27 @@ window.__ModuleLoader__.load({
             h("button", { style: style.btn, onClick: onClose }, "×")),
           state ? null : h("div", { style: { padding: "12px 0" } }, t("common.loading")),
           error ? h("div", { style: { padding: "8px 0", color: "var(--dsh-alias-danger, #d33)" } }, `${t("common.error")}：${error}`) : null,
-          state && !state.ok ? h("div", { style: { padding: "8px 0" } }, state.reasons?.length ? state.reasons.join("；") : "通道不可用") : null,
+          state && !state.ok ? h("div", { style: { padding: "8px 0" } }, state.reasons?.length ? state.reasons.join("；") : t("panel.channelUnavailable")) : null,
           state ? h("div", { style: { ...style.small, padding: "2px 0" } },
-            state.channelKind === "gateway" ? "通道：云端模型网关（搭子 App 不用开着）"
-              : state.channelKind === "local" ? `通道：本机搭子代理 · ${state.baseURL ?? ""}` : "两条通道都不通",
+            state.channelKind === "gateway" ? t("panel.channelGateway")
+              : state.channelKind === "local" ? `${t("panel.channelLocal")} · ${state.baseURL ?? ""}` : t("panel.channelNone"),
             state.channelKind === "gateway" && state.gatewayToken?.expiresAt
-              ? ` · 网关 token 剩 ${Math.max(0, Math.round((state.gatewayToken.expiresAt - Date.now()) / 60000))} 分钟` : null) : null,
+              ? ` · ${t("panel.tokenLeft")} ${Math.max(0, Math.round((state.gatewayToken.expiresAt - Date.now()) / 60000))} ${t("panel.tokenMinutes")}` : null) : null,
           credit ? h(React.Fragment, null,
             h("hr", { style: { height: 1, background: "var(--dsh-alias-border, rgba(128,128,128,.25))", margin: "10px 0", border: 0 } }),
-            h("div", { style: style.row }, h("span", { style: style.label }, "账号"), h("span", null, credit.account || "—")),
-            h("div", { style: { ...style.row, fontSize: 16, fontWeight: 700 } }, h("span", { style: style.label }, "可用积分"), h("span", null, num(credit.available))),
-            h("div", { style: style.row }, h("span", { style: style.label }, "24 小时消耗"), h("span", null, num(credit.consumed24h))),
-            h("div", { style: style.row }, h("span", { style: style.label }, "7 天消耗"), h("span", null, num(credit.consumed7d))),
+            h("div", { style: style.row }, h("span", { style: style.label }, t("panel.account")), h("span", null, credit.account || "—")),
+            h("div", { style: { ...style.row, fontSize: 16, fontWeight: 700 } }, h("span", { style: style.label }, t("panel.available")), h("span", null, num(credit.available))),
+            h("div", { style: style.row }, h("span", { style: style.label }, t("panel.consumed24")), h("span", null, num(credit.consumed24h))),
+            h("div", { style: style.row }, h("span", { style: style.label }, t("panel.consumed7d")), h("span", null, num(credit.consumed7d))),
             h("hr", { style: { height: 1, background: "var(--dsh-alias-border, rgba(128,128,128,.25))", margin: "10px 0", border: 0 } }),
             (credit.packages || []).map(p => h("div", { key: p.packageId, style: style.row },
               h("span", { style: style.label }, `${p.packageType} / ${p.source}`),
               h("span", null, `${num(p.remain)} / ${num(p.total)}`))),
             credit.bonus ? h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 8 } },
-              h("span", null, credit.bonus.todaySigned ? "今日已签到" : "今日未签到"),
-              credit.bonus.todaySigned ? null : h("button", { style: style.btnPrimary, disabled: busy, onClick: () => onClaim() }, "领取今日签到")) : null,
+              h("span", null, credit.bonus.todaySigned ? t("panel.signed") : t("panel.unsigned")),
+              credit.bonus.todaySigned ? null : h("button", { style: style.btnPrimary, disabled: busy, onClick: () => onClaim() }, t("panel.claim"))) : null,
             h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 } },
-              h("button", { style: style.btn, disabled: busy, onClick: () => onRefresh() }, t("credits.refresh")))) : null));
+              h("button", { style: style.btn, disabled: busy, onClick: () => onRefresh() }, t("panel.refresh")))) : null));
     }
 
     function Capsule(props) {
@@ -657,12 +722,12 @@ window.__ModuleLoader__.load({
       // hooks 全部跑完才做条件返回（React 的规则），所以这里只影响渲染，不影响钩子顺序。
       if (!visible) return null;
 
-      const pillText = ready ? num(credit.available) : (state?.ok === false ? "未就绪" : "…");
+      const pillText = ready ? num(credit.available) : (state?.ok === false ? t("capsule.unavailable") : "…");
 
       return h(React.Fragment, null,
         h("button", {
           className: "dsm-dumate-capsule", style: style.pill,
-          title: ready ? `百度搭子积分 · ${state?.account ?? ""}` : `百度搭子：${(state?.reasons?.[0] ?? "读取中…").slice(0, 90)}（点开看详情，或去 设置 → 百度搭子）`,
+          title: ready ? `${t("panel.tooltipReady")} · ${state?.account ?? ""}` : `${t("panel.tooltipPrefix")}：${(state?.reasons?.[0] ?? t("common.loading")).slice(0, 90)}`,
           onClick: () => setOpen(v => !v),
         }, h("span", { style: style.dot(state?.ok === true) }), h("span", null, `DM · ${pillText}`)),
         open ? h("div", { id: "dsh-dumate-overlay-root" },
