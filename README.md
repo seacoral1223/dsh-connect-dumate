@@ -43,7 +43,7 @@
 
 ```powershell
 # 1) 下载并解压
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.4
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.5
 tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
 # 解压出来是目录 dsh-connect-dumate-0.9.3
 ```
@@ -54,7 +54,7 @@ tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
 **B. git clone**
 
 ```bash
-git clone --branch v0.9.4 https://github.com/seacoral1223/dsh-connect-dumate.git
+git clone --branch v0.9.5 https://github.com/seacoral1223/dsh-connect-dumate.git
 ```
 
 然后同样在 **Plugins → Add plugin** 里选这个目录，重启。

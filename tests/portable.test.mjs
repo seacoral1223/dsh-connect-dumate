@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -148,15 +149,23 @@ for (const rel of shipped) {
 check("扫描集包含 portable.test.mjs 自己", scanned.some(s => s.rel === "tests/portable.test.mjs"));
 check(`扫了 ${scanned.length} 个发布文件`, scanned.length > 12);
 
+// 匹配方式：ASCII 标识（用户名、家目录里的名字）必须**整词**命中才算泄漏。
+// 本机用户名常常是合法 GitHub handle 的前缀，按子串匹配会把分发地址、署名这些
+// 本来就该公开的东西报成泄漏 —— 子串误报的害处不是烦，是逼人关掉这条检查。
+// 中文昵称没有词边界可言，仍按子串匹配。
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const isAscii = s => /^[\x20-\x7e]+$/.test(s);
+const hitBy = (line, s) => {
+  if (!s) return false;
+  if (!isAscii(s)) return line.includes(s);
+  return new RegExp(`(?<![A-Za-z0-9_.\\-])${esc(s)}(?![A-Za-z0-9_\\-])`).test(line);
+};
+
 const offenders = [];
-// package.json 的 author/repository/homepage/bugs 是**身份字段**，本来就该写作者与仓库地址。
-// 一律当泄漏会逼人删掉署名，那是把检查改成噪音；但 description/keywords/scripts 里出现就仍然是问题。
-const IDENTITY_FIELDS = /"author"|"url"|"homepage"|"bugs"/;
 for (const { rel, text } of scanned) {
   text.split(/\r?\n/).forEach((line, i) => {
-    if (rel === "package.json" && IDENTITY_FIELDS.test(line)) return;
     for (const s of secretList) {
-      if (line.includes(s)) offenders.push(`${rel}:${i + 1} 含本机隐私值（已隐去）→ ${redact(line)}`);
+      if (hitBy(line, s)) offenders.push(`${rel}:${i + 1} 含本机隐私值（已隐去）→ ${redact(line)}`);
     }
     for (const [label, re] of PATTERNS) {
       if (re.test(line)) offenders.push(`${rel}:${i + 1} ${label} → ${redact(line)}`);
@@ -165,6 +174,17 @@ for (const { rel, text } of scanned) {
 }
 check(`发布集里没有本机隐私值与凭据样式（比对 ${scanned.length} 个文件 / ${secretList.length} 个本机值）`,
   scanned.length > 12 && secretList.length >= 1 && offenders.length === 0, offenders.slice(0, 4).join(" | ") || "零命中");
+
+// 反向证明整词匹配没有把检查改松：真家目录必须仍然抓得住
+{
+  const user = os.userInfo().username;
+  assert.ok(hitBy(`cd C:\\Users\\${user}\\Documents\\x`, user), "整词匹配必须仍能抓到真实家目录");
+  assert.ok(hitBy(`home is ${user} here`, user), "单独出现的用户名要能抓到");
+  if (user !== `${user}1223`) {
+    assert.ok(!hitBy(`https://github.com/${user}1223/dsh-connect-dumate`, user), "长 handle 里的子串不该误报");
+  }
+  console.log("  ok   整词匹配双向验证：真路径仍抓得住，合法 handle 不误报");
+}
 
 // 运行时输出面也不许把账号主键交给浏览器：同源接口是「可能被贴出去」的面
 const indexText = fs.readFileSync(path.join(ROOT, "index.js"), "utf8");

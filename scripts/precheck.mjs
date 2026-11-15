@@ -99,20 +99,26 @@ for (const must of ["index.js", "client.js", "src/upstream.cjs", "LICENSE", "doc
   if (!listed.includes(must)) ok(`包里必须有 ${must}`, false);
 }
 const leaks = [];
-// package.json 的 author/repository/homepage/bugs 是**身份字段**，本来就该写作者与仓库地址；
-// 把它们一律当泄漏会逼人删掉署名，那是把检查改成噪音。所以这个文件按字段分开判：
-// 身份字段允许出现 handle，其余字段（description/keywords/scripts…）不许出现任何本机值。
-const IDENTITY_FIELDS = /"author"|"url"|"homepage"|"bugs"/;
+// ASCII 标识**整词**匹配：本机用户名常常是合法 GitHub handle 的前缀，
+// 按子串匹配会把分发地址、署名这些本来该公开的东西报成泄漏（害处是逼人关掉检查）。
+// 中文昵称没有词边界，仍按子串。
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const hitBy = (line, s) => {
+  if (!s) return false;
+  if (!/^[\x20-\x7e]+$/.test(s)) return line.includes(s);
+  return new RegExp(`(?<![A-Za-z0-9_.\\-])${esc(s)}(?![A-Za-z0-9_\\-])`).test(line);
+};
 const compared = listed.filter(f => /\.(js|cjs|mjs|json|md|yml)$/.test(f) && fs.existsSync(path.join(ROOT, f)));
 for (const rel of compared) {
   const lines = fs.readFileSync(path.join(ROOT, rel), "utf8").split(/\r?\n/);
   lines.forEach((line, i) => {
-    if (rel === "package.json" && IDENTITY_FIELDS.test(line)) return;
     for (const s of secrets) {
-      if (s && line.includes(s)) leaks.push(`${rel}:${i + 1} 含本机隐私值`);
+      if (hitBy(line, s)) leaks.push(`${rel}:${i + 1} 含本机隐私值`);
     }
   });
 }
+// 反向证明整词匹配没把检查改松：真家目录必须仍然抓得住
+ok("整词匹配仍能抓到真实家目录", hitBy(`cd C:\\Users\\${process.env.USERNAME}\\Documents`, process.env.USERNAME));
 // 比对集太小 = 这条检查等于没跑，宁可判失败
 ok(`包里没有本机隐私值（比对 ${compared.length} 个文件 / ${secrets.size} 个待查值）`,
   compared.length >= 10 && secrets.size >= 1 && leaks.length === 0,
