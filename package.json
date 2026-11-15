@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-dumate",
   "displayName": "DSH Connect DuMate",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "把本机登录的百度搭子（DuMate）接入 DeepSeek Harness：模型直接进 DSH 的模型选择器，默认走云端模型网关（搭子 App 不用开着），积分余额、积分包、每日签到与近 7 天消耗作为只读读数显示在输入框胶囊里。",
   "keywords": [
     "dsh-plugin",
@@ -32,7 +32,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "test": "node tests/adapter-offline.test.mjs && node tests/failure-codes.test.mjs && node tests/lifecycle.test.mjs && node tests/coldstart.test.mjs && node tests/fresh-machine.test.mjs && node tests/foreign-machine.test.mjs && node tests/client-structure.test.mjs && node tests/pill-visibility.test.mjs && node tests/defaults.test.mjs && node tests/disabled.test.mjs && node tests/manual-login.test.mjs && node tests/portable.test.mjs",
+    "test": "node tests/adapter-offline.test.mjs && node tests/failure-codes.test.mjs && node tests/lifecycle.test.mjs && node tests/coldstart.test.mjs && node tests/fresh-machine.test.mjs && node tests/foreign-machine.test.mjs && node tests/client-structure.test.mjs && node tests/pill-visibility.test.mjs && node tests/defaults.test.mjs && node tests/disabled.test.mjs && node tests/manual-login.test.mjs && node tests/http-robustness.test.mjs && node tests/portable.test.mjs",
     "check": "node --check index.js && node --check client.js && node --check lib/adapter.js && node --check src/upstream.cjs && npm test",
     "publish:check": "node scripts/precheck.mjs",
     "prepublishOnly": "npm run check",

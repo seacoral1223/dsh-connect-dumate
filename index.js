@@ -620,6 +620,17 @@ export function apply(ctx, config = {}) {
   /** 勾选 / 图片开关 / 显示名覆盖：点一下即生效并落盘。 */
   function setModelFlags({ key, enabled, imageInput, displayName }) {
     if (typeof key !== "string" || !key) return { ok: false, error: "缺 key" };
+    // key 必须是目录里真存在的模型。原先只验「是不是字符串」，于是任何客户端（写错的、
+    // 被篡改的、脚本乱试的）都能往 displayNames / disabledModels 里塞任意键，
+    // 而这些只会随状态文件永久堆积 —— 分发出去的东西不能这样。
+    const known = modelViews();
+    if (!known.some(m => m.key === key)) {
+      return { ok: false, error: `这台机器的搭子目录里没有「${key.slice(0, 40)}」这个模型，改动没有应用` };
+    }
+    // 显示名截断 + 去掉控制字符：长名会把选择器整行撑爆，控制字符会让界面与日志变乱
+    const cleanName = typeof displayName === "string"
+      ? displayName.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80)
+      : null;
     const router = upstream.isAutoRouterModel(key);
     if (enabled === false) {
       if (!toggles.disabledModels.includes(key)) toggles.disabledModels.push(key);
@@ -630,8 +641,8 @@ export function apply(ctx, config = {}) {
       if (router && !toggles.routerEnabled.includes(key)) toggles.routerEnabled.push(key);
     }
     if (imageInput === true || imageInput === false) toggles.imageInput[key] = imageInput;
-    if (typeof displayName === "string") {
-      if (displayName.trim()) toggles.displayNames[key] = displayName.trim();
+    if (cleanName !== null) {
+      if (cleanName) toggles.displayNames[key] = cleanName;
       else delete toggles.displayNames[key];
     }
     const saved = saveToggles(toggles);
