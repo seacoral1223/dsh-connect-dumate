@@ -1,0 +1,32 @@
+# 仓库内部一律用 LF 存，checkout 时按平台决定 —— 这样 Linux/macOS 上 clone 到的
+# .sh / .mjs 不会带着 CRLF 跑不起来。
+* text=auto eol=lf
+
+# 真要是 Windows 专用脚本，明确标出来，别靠猜
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制不许动
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.tgz binary
+*.zip binary
+
+# 这些保持原样（已经自己控制换行）
+*.svg text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+
+# 差异显示
+*.js diff=javascript
+*.json diff=javascript

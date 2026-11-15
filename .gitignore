@@ -1,0 +1,23 @@
+# 内部项目记忆：逆向笔记、踩坑记录、指向 tmp/ 的探测脚本路径。
+# 想公开就删掉下面这行 —— 但它含内部称呼与调试流水，默认不发。
+AGENTS.md
+
+# 本地状态与凭据（插件其实写在 ~/.dsh，这里只是防止有人手滑把副本放进目录）
+dumate-state.json
+*.state.json
+.dumate-*
+*.tgz
+*.zip
+
+# 依赖与构建产物
+node_modules/
+dist/
+coverage/
+*.log
+npm-debug.log*
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
