@@ -8,12 +8,22 @@ Set-Location $Root
 
 $raw = [System.IO.File]::ReadAllText([System.IO.Path]::Combine($Root, 'package.json'), [System.Text.Encoding]::UTF8)
 $pkg = $raw | ConvertFrom-Json
-$owner = 'seacoral'
-$repoName = $pkg.name
-$repoWeb = "https://github.com/$owner/$repoName"
 
+# owner 与仓库名一律从 package.json 的 repository 解析，不在脚本里写死。
+# 写死过一次，撞上了一个同名陌生人，把提交署名都填错了 —— 这类错误必须靠结构消掉。
+$repoUrl = if ($pkg.repository -is [string]) { $pkg.repository } else { $pkg.repository.url }
+$m = [regex]::Match($repoUrl, 'github\.com[/:](?<owner>[^/]+)/(?<name>[^/.]+)')
+if (-not $m.Success) {
+  Write-Host '[停] package.json 的 repository 不是 GitHub 地址，解析不出 owner/仓库名。' -ForegroundColor Red
+  Write-Host ('     当前值: ' + $repoUrl)
+  exit 1
+}
+$owner = $m.Groups['owner'].Value
+$repoName = $m.Groups['name'].Value
+$repoWeb = "https://github.com/$owner/$repoName"
 Write-Host ''
 Write-Host ('=== 发布 ' + $pkg.name + '@' + $pkg.version + ' ===') -ForegroundColor Cyan
+Write-Host ('    目标仓库: ' + $repoWeb)
 
 # ---------- 1) Git 在不在 ----------
 $git = $null
@@ -36,18 +46,23 @@ if (-not $git) {
 Write-Host ('  ok  git: ' + $git)
 
 # ---------- 2) 提交署名 ----------
-$name = & $git config --global user.name
-$mail = & $git config --global user.email
+# 看的是**生效值**（`git config user.name` 会依次读仓库内 → 全局 → 系统），
+# 不是只看全局 —— 仓库内已经配好的人还让人去改全局，等于让他把可能填错的值扩散到所有仓库。
+$name = & $git config user.name
+$mail = & $git config user.email
+$scope = if (& $git config --local user.name) { '仓库内' } elseif (& $git config --global user.name) { '全局' } else { '未设置' }
 if (-not $name -or -not $mail) {
   Write-Host ''
-  Write-Host '[停] git 还没配署名（user.name / user.email 是空的）。跑这两行，值你自己定：' -ForegroundColor Yellow
-  Write-Host ('  & "' + $git + '" config --global user.name "你的名字"')
-  Write-Host ('  & "' + $git + '" config --global user.email "你 GitHub 用的邮箱"')
+  Write-Host '[停] git 没有生效的提交署名。建议只给这个仓库配（不污染全局）：' -ForegroundColor Yellow
+  Write-Host ('  & "' + $git + '" -C "' + $Root + '" config user.name "你的名字"')
+  Write-Host ('  & "' + $git + '" -C "' + $Root + '" config user.email "你 GitHub 用的邮箱"')
+  Write-Host '想所有仓库都用同一份，就把上面的 config 后面加 --global。'
   Write-Host '注意：邮箱会公开出现在提交记录里。想避免就用 GitHub 的 noreply 地址，'
-  Write-Host '      形如 12345678+seacoral@users.noreply.github.com（数字在 GitHub 个人主页能查到）。'
+  Write-Host '      形如 <你的用户ID>+<你的handle>@users.noreply.github.com'
+  Write-Host '      （ID 在 https://api.github.com/users/<handle> 能查到，或看个人主页）'
   exit 1
 }
-Write-Host ('  ok  提交署名: ' + $name + ' <' + $mail + '>')
+Write-Host ('  ok  提交署名: ' + $name + ' <' + $mail + '>（来自' + $scope + '配置）')
 
 # ---------- 3) 仓库必须先在 GitHub 上建好 ----------
 $repoOk = $false

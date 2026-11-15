@@ -12,14 +12,14 @@
     "credits"
   ],
   "license": "MIT",
-  "author": "seacoral",
+  "author": "seacoral1223",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/seacoral/dsh-connect-dumate.git"
+    "url": "git+https://github.com/seacoral1223/dsh-connect-dumate.git"
   },
-  "homepage": "https://github.com/seacoral/dsh-connect-dumate#readme",
+  "homepage": "https://github.com/seacoral1223/dsh-connect-dumate#readme",
   "bugs": {
-    "url": "https://github.com/seacoral/dsh-connect-dumate/issues"
+    "url": "https://github.com/seacoral1223/dsh-connect-dumate/issues"
   },
   "type": "module",
   "main": "./index.js",
