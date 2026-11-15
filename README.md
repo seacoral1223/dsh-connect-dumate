@@ -37,15 +37,34 @@
 
 ## 装上
 
-两条路，都别照抄网上那种 `npm i -g` 写法 —— **全局安装不会把 bundle 注册进 DSH 的 profile**，装完看不到东西是必然的：
+这个插件目前**只通过 GitHub 发布**（不走 npm），装法两种：
 
-- **本地目录**：把本目录放到你的工作区，然后在 DSH 的插件管理里 **Plugins → Add plugin**（中文界面里对应「插件 → 添加插件」，它安装的就是一个本地目录）。本地目录安装走 pnpm link，`files` 白名单**不过滤** —— 所以直接把整个文件夹拷给别人时，`AGENTS.md`、`tmp/` 这些内部笔记会跟着过去；要分发请用 `npm pack` 出来的 tarball 或已发布的包。
-- **已发布到 npm 之后**：在插件管理里按包名安装，或让 Agent 调 `plugin_manager` 的 `install_bundle`。
+**A. 下载打包好的源码（最简单，3 步）**
 
-装完**重启 DSH**（换 JS 世代必须重启），然后：
+```powershell
+# 1) 下载并解压
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.4
+tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
+# 解压出来是目录 dsh-connect-dumate-0.9.3
+```
 
-- 模型选择器里会出现 **百度搭子 DuMate** 一组；
-- 会话选中其中任意模型时，输入框工具行上出现积分胶囊；
+2) 打开 DSH 的插件管理（**Plugins → Add plugin**），选那个解压出来的目录。
+3) **重启 DSH**。
+
+**B. git clone**
+
+```bash
+git clone --branch v0.9.4 https://github.com/seacoral1223/dsh-connect-dumate.git
+```
+
+然后同样在 **Plugins → Add plugin** 里选这个目录，重启。
+
+> 装完可以自己在目录里跑 `npm test`（12 个回归，不联网、不碰你的账号数据）验证包是完整的。
+
+装好之后你应该看到：
+
+- 模型选择器里出现 **百度搭子 DuMate** 一组；
+- 会话选中其中任意模型时，输入框工具行上出现积分胶囊（**其它模型下不出现**，这是设计）；
 - **设置 → 百度搭子** 有账号 / 积分 / 模型 / 能力 / 诊断五个分栏；
 - 对话里打 `/dumate doctor` 看自检，或问「我的搭子积分还剩多少」（工具 `dumate_credits`）。
 
