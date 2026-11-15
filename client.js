@@ -51,6 +51,7 @@ window.__ModuleLoader__.load({
         "login.manualHas": "手动导入",
         "login.manualUnits": "条 Cookie",
         "login.manualNone": "手动 Cookie：未导入",
+        "login.keyBroken": "手动 Cookie：导入过，但本机密钥文件不可用（多半被同步盘截断或改写过），密文解不开。重新导入一次即可",
         "login.missing": "缺",
         "login.howto": "怎么取这两个 Cookie（不装桌面版时用）",
         "login.step1": "用浏览器登录 https://console.bce.baidu.com（用你搭子同一个百度账号）。",
@@ -101,11 +102,11 @@ window.__ModuleLoader__.load({
         "cap.autocheckin": "每天自动签到",
         "cap.autocheckin.note": "开启后插件每天替当前账号档领一次：先读状态，已签过的不重复领，所以重启也不会多领。关闭：不点按钮就什么都不会发生。默认关闭。",
         "cap.lastcheckin": "上次自动签到日期",
-        "cap.none": "从未",
         "doctor.hint": "这一栏只读，存在的唯一理由是能整段贴进问题反馈。里面没有任何会改设置的控件。",
         "doctor.copy": "复制诊断 JSON",
         "doctor.copied": "已复制",
         "common.error": "读数失败",
+        "common.actionFailed": "刚才那个操作没有生效",
         "common.loading": "读取中…",
         // 面板与零散标签：原先硬写成中文，导致英文界面下设置页是英文、点开胶囊却全是中文
         "panel.account": "账号",
@@ -131,6 +132,7 @@ window.__ModuleLoader__.load({
         "models.leaveEmpty": "留空 =",
         "cap.currentChannel": "当前通道",
         "cap.none": "无",
+        "cap.never": "从未",
         "poll.m1": "1 分钟",
         "poll.m5": "5 分钟",
         "poll.m10": "10 分钟",
@@ -178,6 +180,7 @@ window.__ModuleLoader__.load({
         "login.manualHas": "Pasted",
         "login.manualUnits": "cookies",
         "login.manualNone": "Pasted cookies: none",
+        "login.keyBroken": "Pasted cookies: imported before, but this machine's key file is unreadable (likely truncated or rewritten by a sync client) so the ciphertext can't be opened. Paste them again.",
         "login.missing": "missing",
         "login.howto": "How to get those two cookies (if you don't install the app)",
         "login.step1": "Sign in at https://console.bce.baidu.com in a browser, with the same Baidu account DuMate uses.",
@@ -228,11 +231,11 @@ window.__ModuleLoader__.load({
         "cap.autocheckin": "Daily auto check-in",
         "cap.autocheckin.note": "When on, the plugin claims once a day for the selected account: it reads the state first and never re-claims a day already signed, so a restart cannot double-claim. Off means nothing happens unless you press the button. Default off.",
         "cap.lastcheckin": "Last auto check-in date",
-        "cap.none": "never",
         "doctor.hint": "Read-only. This tab exists so the whole block can be pasted into a bug report; it holds no controls that change anything.",
         "doctor.copy": "Copy diagnostics JSON",
         "doctor.copied": "Copied",
         "common.error": "Read failed",
+        "common.actionFailed": "That action did not take effect",
         "common.loading": "Loading…",
         "panel.account": "Account",
         "panel.available": "Available credits",
@@ -257,6 +260,7 @@ window.__ModuleLoader__.load({
         "models.leaveEmpty": "Empty =",
         "cap.currentChannel": "Current channel",
         "cap.none": "none",
+        "cap.never": "never",
         "poll.m1": "1 min",
         "poll.m5": "5 min",
         "poll.m10": "10 min",
@@ -276,6 +280,9 @@ window.__ModuleLoader__.load({
     };
 
     const num = v => {
+      // Number(null) / Number("") 都是 0 —— 于是「没读到数」和「真的是 0 分」长得一模一样，
+      // 胶囊会显示 DM · 0，用户以为积分用光了。缺值必须显示成占位符。
+      if (v === null || v === undefined || v === "") return "—";
       const n = Number(v);
       return Number.isFinite(n) ? n.toLocaleString("zh-CN", { maximumFractionDigits: 2 }) : "—";
     };
@@ -362,32 +369,42 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState(null);
+      // 读请求有两个源头（轮询 + 打开面板）再加动作后的自读，**没有任何一方知道对方在飞**。
+      // 没有序号保护时，先发的请求后回来会把新状态整片盖回去：实测面板先显示新余额，
+      // 几秒后被挂载时那个旧响应覆盖成旧值。这里让「最后发起那一次」才有资格写 state。
+      const seqRef = useRef(0);
 
       const reload = useCallback(async (quiet = true) => {
+        const my = ++seqRef.current;
         try {
           const next = await readState(viewRef?.current ? String(viewRef.current) : "");
+          if (my !== seqRef.current) return; // 已经有更晚发起的读取，丢弃这次
           setState(next);
           setError(next?.creditError ?? null);
         } catch (e) {
+          if (my !== seqRef.current) return;
           setError(String(e?.message ?? e));
         } finally {
-          if (!quiet) setBusy(false);
+          // busy 只由**最新那一次**清，否则旧请求先完会把还在飞的按钮放开
+          if (!quiet && my === seqRef.current) setBusy(false);
         }
       }, [viewRef]);
 
       const run = useCallback(async (body, quiet = true) => {
         if (!quiet) setBusy(true);
+        const my = ++seqRef.current;
         try {
           const json = await postAction(body);
+          if (my !== seqRef.current) return json; // 有更新的动作/读取在写，这次的结果不再覆盖
           if (json.state) setState(json.state);
           else await reload(true);
           setError(null);
           return json;
         } catch (e) {
-          setError(String(e?.message ?? e));
+          if (my === seqRef.current) setError(String(e?.message ?? e));
           return { ok: false, error: String(e?.message ?? e) };
         } finally {
-          if (!quiet) setBusy(false);
+          if (!quiet && my === seqRef.current) setBusy(false);
         }
       }, [reload]);
 
@@ -427,9 +444,10 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState(null);
 
       async function doImport() {
-        setBusy(true);
-        const r = await run({ action: "login", kind: "import", text: paste });
-        setBusy(false);
+        // 不能在这里调 setBusy —— 它是 useDumate 的局部名，不在本组件作用域。
+        // 而 doImport 是 async，ReferenceError 会变成未捕获 rejection：按钮看起来完全没反应。
+        // `run(body, false)` 自己会置 busy / 清 busy（见 useDumate），这里什么都不用做。
+        const r = await run({ action: "login", kind: "import", text: paste }, false);
         if (r.ok) { setNotice({ ok: true, text: `${t("login.okPrefix")}${r.count}${t("login.okSuffix")} ${r.note || ""}` }); setPaste(""); }
         else setNotice({ ok: false, text: r.error || t("common.error") });
       }
@@ -450,7 +468,9 @@ window.__ModuleLoader__.load({
             `${t("login.detected")}：${login?.app?.available ? t("login.appYes") : t("login.appNo")}`,
             login?.manual?.present
               ? ` · ${t("login.manualHas")} ${login.manual.count} ${t("login.manualUnits")}${login.manual.sufficient ? "" : `（${t("login.missing")} ${login.manual.missing.join("、")}）`}`
-              : ` · ${t("login.manualNone")}`,
+              : ` · ${login?.manual?.state === "key-missing" || login?.manual?.state === "cipher-undecryptable"
+                  ? t("login.keyBroken")
+                  : t("login.manualNone")}`,
             // 配置值与实际生效值不一致时，一定要说出来 —— 否则用户以为换了账号
             login?.inUse && login.inUse !== login.authSource
               ? h("div", { style: { ...style.small, color: "var(--dsh-alias-warning, #b8860b)", marginTop: 4 } },
@@ -605,7 +625,7 @@ window.__ModuleLoader__.load({
             h("input", { type: "checkbox", checked: !!state?.autoCheckIn, disabled: busy, onChange: () => run({ action: "knobs", autoCheckIn: !state?.autoCheckIn }, false) }),
             h("strong", null, t("cap.autocheckin"))),
           h("div", { style: { ...style.hint, marginTop: 6 } }, t("cap.autocheckin.note")),
-          h("div", { style: style.small }, `${t("cap.lastcheckin")}：${state?.lastAutoCheckInDate || t("cap.none")}`)));
+          h("div", { style: style.small }, `${t("cap.lastcheckin")}：${state?.lastAutoCheckInDate || t("cap.never")}`)));
     }
 
     function DoctorTab({ t, state, copied, setCopied }) {
@@ -649,6 +669,11 @@ window.__ModuleLoader__.load({
           h("div", { style: { fontWeight: 650 } }, state.reasons?.[0] || t("panel.channelUnavailable")),
           h("div", { style: style.hint }, state.reasons?.slice(1).join("；") || "")) : null,
         h("div", { style: style.tabs }, tabs.map(([key, label]) => h("div", { key, style: style.tab(tab === key), onClick: () => setTab(key) }, label))),
+        // 动作失败横幅：放在设置页这一层，五个分栏都看得见。
+        // 原先只有积分分栏拿到 error，于是「改了勾选但没存进去」在界面上毫无痕迹。
+        error ? h("div", { style: { ...style.hint, marginTop: 8, padding: "6px 8px", border: "1px solid var(--dsh-alias-danger, #c0392b)", borderRadius: 6 } },
+          h("div", { style: { fontWeight: 650 } }, t("common.actionFailed")),
+          h("div", { style: style.small }, String(error).slice(0, 300))) : null,
         tab === "accounts" ? h(AccountsTab, { t, state, busy, run }) : null,
         tab === "credits" ? h(CreditsTab, { t, state, busy, error, run, reload }) : null,
         tab === "models" ? h(ModelsTab, { t, state, busy, run }) : null,
@@ -729,10 +754,19 @@ window.__ModuleLoader__.load({
       }, [visible]);
 
       // 没选中百度搭子：不发请求、不起定时器。切回来的那一帧才拉第一次。
+      // 定时器与「取数」分成两个 effect：原先把 state?.pollIntervalMs 放进取数 effect 的依赖，
+      // 于是首帧响应把 undefined 变成 300000 → 依赖变化 → effect 重跑 → **每次挂载必然发两次请求**。
       useEffect(() => {
         if (!visible) return undefined;
         void reload(false);
+        return () => { clearInterval(timerRef.current); timerRef.current = null; };
+      }, [visible, reload]);
+
+      // 间隔来自宿主，单独一个 effect 只管定时器，不再触发取数
+      useEffect(() => {
+        if (!visible) return undefined;
         const ms = Number(state?.pollIntervalMs) || 300000;
+        clearInterval(timerRef.current);
         timerRef.current = setInterval(() => void reload(true), ms);
         return () => clearInterval(timerRef.current);
       }, [visible, reload, state?.pollIntervalMs]);

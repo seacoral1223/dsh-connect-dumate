@@ -1,5 +1,28 @@
 # 更新记录
 
+## 0.9.9
+
+对抗性审查（Host 半段 + 浏览器半段 + 文档一致性）后的修复。这一批的共同点是：**在开发机自己的形态下永远看不见**，别人一装就坏。
+
+- **S3 严重（数据销毁）**：读取路径上的 `cookieKey()` 在密钥文件读不到或长度不对时会**当场造一把新的覆盖掉** —— 那份加密的手动 Cookie 从此永久解不开，而界面只显示"没导入"。Windows 上杀软 / OneDrive 造成一次瞬时 EBUSY 就够。现在读取走 `readCookieKey()`（只读，绝不写盘），只有导入才允许造密钥；并新增 `login.manual.state` 区分 none / key-missing / cipher-undecryptable / incomplete，界面据此说不同的话。
+- **S2 严重**：选非当前账号档时，`clientForProfile` 拿的是**精简后的展示对象**（不含密文字段），于是非 active 档永远解不开 → 通道消失、对话报 AUTH、重启仍坏。本机只有一个档且它就是 active，所以完全看不出来。现在回到 `auth.json` 的原始档取密文，`usable` 与实际解密用同一条判据。
+- **S1 严重**：没装桌面版、只用手动 Cookie 时，`readCatalog(null)` 抛 `ERR_INVALID_ARG_TYPE`，诊断里显示的是一句 Node 英文。现在 `innerDir` 对非字符串直接返回 null，`readCatalog` 也随之返回 null。
+- **S13**：内层目录的探针原先只查 `<inner>/config/...`，而真实形状是 `<inner>/<uid>/config/...` —— 那段"扫描候选"是死代码，内层名不叫 `qianfan_desk_xdg` 就永远找不到通道 B。现在真的下探一层，且**没命中时返回 null 而不是假装返回第 0 个候选**。
+- **S4**：登录失效时上游的 `message` 是对象，`String(obj)` 得到 `[object Object]`，七个用户可见面同时说人话失败。现在 `CloudClient.request` 也走 `describeCloudError`。
+- **S8（安全）**：同源校验是 **fail-open** —— 取不到自家地址时一律放行，等于本机任意网页都能改设置、导入 Cookie、点签到。读面改为只认"没带 Origin"的请求，写面在取不到自家地址时**一律 403**。
+- **L1**：`consumedPoints` / `pointsChange` 还在用裸 `Number()`，上游带千分位就变 `?`；改为复用 `toNum()`。
+- **S14**：`saveToggles` 的错误与文件名没过脱敏就回给页面（`EPERM ... rename 'C:\Users\<用户名>\...'`）。`tidyPath/tidyText` 提到模块顶层（原先在 `apply()` 里，顶层函数够不到），并改为**大小写不敏感**、`homedir()` 为空时不再把整句逐字符插 `~`。
+- **A1（浏览器）**：`AccountsTab` 的导入按钮裸用 `setBusy`（那是 `useDumate` 的局部名）→ 点「导入并验证」**100% 没反应**，因为 async 里的 ReferenceError 变成未捕获 rejection。同类问题第二次犯（上一次是裸用 `t`）。
+- **A2（浏览器）**：读请求没有序号保护，轮询 / 打开面板 / 动作后自读三方并发时，**旧响应会把新状态整片盖回去**（实测面板先显示新余额，随后被挂载时那个旧响应改回旧值）。现在按发起顺序只允许最新一次写 state。另外把定时器与取数拆成两个 effect —— 原先 `pollIntervalMs` 既是依赖又来自响应，**每次挂载必然发两次请求**。
+- **A5**：`cap.none` 在 zh/en 里各声明两次，后写静默覆盖前写，于是"上次自动签到日期"显示成"无"（应为"从未"）。拆成 `cap.none` / `cap.never`。
+- **A7**：`num(null)` 显示 `0` —— "没读到数"和"真的是 0 分"长得一样，胶囊会显示 `DM · 0`。缺值改为 `—`。
+- **A6**：动作失败的提示只送到积分分栏，改勾选/切登录方式失败时界面毫无痕迹。改为在设置页统一挂一条横幅，五个分栏都看得见。
+- **旋钮不再静默丢弃**：`mode` / `pollIntervalMs` / `authSource` / `autoCheckIn` 白名单外的值原先直接跳过却回 `ok:true`，下拉框"无声跳回"；`activeProfileId` 只验类型，任意垃圾永久留在状态文件。现在一律拒绝并说清"只认哪些、收到的是什么"。
+- **文档纠正**：README 的「支持的系统：Windows / macOS / Linux」改为**只有 Windows 实机验证过**（AGENTS 早就明令不许写成支持三平台，文档一直没跟上）；「12 个回归，不联网、不碰你的账号数据」三条都不实，改为 15 个并说明哪几条会真连上游；冷启动那句「0.8 秒交出 22 个」是三个互相打脸的数字之一且测试从不断言 —— 现在 `coldstart` 真的断言「第一帧 ≤500ms 交得出非空目录」（实测 2ms）。
+
+新增回归 `tests/machine-variants.test.mjs`（14 → **15**）：多账号档 / 无 App 只手动 Cookie / 内层目录名非默认 / 密钥被截断 —— 四种**非默认机器形态**。已做反向验证：把 S1/S2/S3 的修法逐个退回，测试都会变红；还原后重新变绿。
+另：`client-structure` 的点击循环改为 **await 异步 handler** 并注册 `unhandledRejection`（这是 A1 能藏住的原因），假 React 的 `useEffect` 现在真的执行 cleanup（否则测试进程被悬挂定时器拖死不退出），hook seed 从"数第几个"改为**按状态变量名**（加一个 hook 就会让序号错位并误报成功）。
+
 ## 0.9.8
 
 - **积分解析不再会静默把余额报成 0**。实测上游 `points/package/list` 的 `totalPoints` / `usedPoints` 是**字符串**，而旧代码用 `Number(x) || 0` —— 上游哪天加个千分位，余额直接归零且不报错。现在走 `toNum()`（剥千分位与空格）。

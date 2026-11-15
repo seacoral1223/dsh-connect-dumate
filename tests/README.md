@@ -1,6 +1,6 @@
 # 回归测试
 
-**十四个**，都不需要 DSH 进程：假 ctx 按 cordis 语义跑 effect、假 SSE 服务、假 HTTP 状态码、假 React（能翻状态、递归渲染子组件、把控件全点一遍）。`coldstart` 与 `lifecycle` 会真连一次网关读目录，离线时退到兜底并通过。
+**十五个**，都不需要 DSH 进程：假 ctx 按 cordis 语义跑 effect、假 SSE 服务、假 HTTP 状态码、假 React（能翻状态、递归渲染子组件、把控件全点一遍）。`coldstart` 与 `lifecycle` 会真连一次网关读目录，离线时退到兜底并通过。
 
 一条命令跑全部：**`npm test`**。`npm run check` = 语法检查 + 全部；`npm run publish:check` 再叠加元数据 / GitHub 仓库存在性 / 版本重复 / 隐私 / 发布完整性。`prepublishOnly` 挂的是 `npm run check` —— **回归不过就发不出去**，这是刻意的。
 
@@ -19,6 +19,7 @@
 | `defaults.test.mjs` | 「推荐（按后端去重）」：**素材自己造 + 把 fetch 桩成失败**（不依赖任何机器状态），五个 id 落同一后端 → 只留一行、独占后端不误伤、路由档位全关、幂等、批量改动后必须无条件广播 `llm/models-updated`；诊断表启用数必须现算 |
 | `disabled.test.mjs` | `enabled:false` 之后 fetch 计数器必须为 0，且**带对照组**（启用时确实发了请求）—— 否则那个「0」只是计数器没接上；同时验 `ok=false` 与三个工具都回「已禁用」 |
 | `manual-login.test.mjs` | 方式二端到端：三种粘法 → 校验必需项 → **真换到网关 token** 才存 → 加密存储 → 切换登录方式 → 清除。逐值比对状态文件 / 返回值 / 日志都没有明文；并验回执必须说明**实际在用哪份凭据**（auto + 桌面版可用时手动 Cookie 只是备胎，不写这句用户会以为换了账号） |
+| `machine-variants.test.mjs` | **非默认机器形态**四种：多账号档（选非 active 档必须解得开）、没装 App 只手动 Cookie（不许抛 Node 英文）、内层目录名不在候选里（扫描要真的下探 uid 一层）、密钥被截断（读取三次字节必须一动不动，且状态能区分 key-missing / none） |
 | `http-robustness.test.mjs` | 同源接口乱传 15 组参数：不崩、返回都是 JSON、不回显本机标识、不写坏状态文件；**目录外的 key 一律拒绝并说明原因**（否则垃圾只随状态文件堆积）；显示名截 80 字并剥控制字符；日志无凭据 |
 | `portable.test.mjs` | ① 跨平台目录候选（Windows 双 APPDATA、macOS `Library/Application Support`、Linux `~/.config` 与 `XDG_CONFIG_HOME`、`DUMATE_USER_DATA` 严格生效不回退）；② **隐私**：违禁值全部运行时推导、扫描范围 = tarball 范围、**不跳过任何文件包括它自己**、ASCII 标识整词匹配（真家目录仍能抓到，合法 handle 不误报）、命中只报位置不打印原文；③ 发布完整性：无 `private:true`、`files` 覆盖运行必需文件、`.cjs` 后缀保住、不静态 import DSH 包、客户端全走同源相对路径、宿主与客户端字段名一致 |
 

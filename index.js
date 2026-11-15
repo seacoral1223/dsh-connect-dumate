@@ -19,6 +19,33 @@ const MODES = new Set(["auto", "gateway", "local"]);
 const AUTH_SOURCES = new Set(["auto", "app", "manual"]);
 
 /** 插件自己的可写状态：勾选、图片开关、显示名覆盖、上游教给我们的真实模型名。 */
+/**
+ * 把家目录缩成 ~。理由不是好看：诊断页与 `/dumate doctor` 那一块是**设计来让人整段贴进问题反馈**的，
+ * 绝对路径里带着这台机器的用户名，贴出去就等于把身份一起发走。
+ * 放在模块顶层是因为 saveToggles 也在顶层 —— 原先这两个定义在 apply() 里，顶层函数够不到，
+ * 于是落盘失败时那句 `EPERM ... rename 'C:\Users\<用户名>\...'` 会原样回给页面。
+ */
+function homePrefix() {
+  try { return os.homedir() || ""; } catch { return ""; }
+}
+function tidyPath(p) {
+  const home = homePrefix();
+  const s = String(p ?? "");
+  if (!home) return s;
+  // 大小写不敏感：域账号 / 服务启动时 USERPROFILE 与 APPDATA 的大小写可能不一致，
+  // 原先 startsWith 精确匹配会漏，实测 doctor 文本里出现用户名 3 次。
+  return s.slice(0, home.length).toLowerCase() === home.toLowerCase()
+    ? "~" + s.slice(home.length).replace(/\\/g, "/")
+    : s;
+}
+function tidyText(t) {
+  const home = homePrefix();
+  let s = String(t ?? "");
+  // home 为空时什么都不做 —— 原先 new RegExp("", "g") 会在每个字符前插一个 ~，整句报废
+  if (home) s = s.replace(new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "~");
+  return tidyPath(s);
+}
+
 function stateFile() {
   const home = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
   return path.join(home, "dumate-state.json");
@@ -34,17 +61,29 @@ function stateFile() {
 function cookieKeyFile() {
   return path.join(process.env.DSH_HOME || path.join(os.homedir(), ".dsh"), "dumate-cookies.key");
 }
-function cookieKey() {
-  const keyFile = cookieKeyFile();
+/**
+ * 只读密钥，**绝不写盘**。
+ * 这是读取路径（loginInfo → 每次 snapshot 都会走到）。原先读不到或长度不对就
+ * 当场 randomBytes 覆盖旧文件 —— 那份密文从此永久解不开，而界面只显示「没导入」，
+ * 用户完全不知道发生了什么。Windows 上杀软 / OneDrive / 索引器造成的瞬时 EBUSY 是常态，
+ * 所以「读不到」必须是一种正常状态，不是重新造一把的理由。
+ */
+function readCookieKey() {
   try {
-    const k = fs.readFileSync(keyFile);
-    if (k.length === 32) return k;
-  } catch { /* 没有就现造 */ }
+    const k = fs.readFileSync(cookieKeyFile());
+    // 长度不对就是不对，别"修好"它：那多半是文件被同步盘截断，覆盖等于亲手销毁数据
+    return k.length === 32 ? k : null;
+  } catch { return null; }
+}
+/** 造/取密钥。**只允许在导入凭据这条写路径上调用** —— 它会落盘。 */
+function cookieKey() {
+  const have = readCookieKey();
+  if (have) return have;
   const k = crypto.randomBytes(32);
   try {
-    fs.mkdirSync(path.dirname(keyFile), { recursive: true });
-    fs.writeFileSync(keyFile, k);
-    try { fs.chmodSync(keyFile, 0o600); } catch { /* Windows 上 chmod 意义有限，失败就算了 */ }
+    fs.mkdirSync(path.dirname(cookieKeyFile()), { recursive: true });
+    fs.writeFileSync(cookieKeyFile(), k);
+    try { fs.chmodSync(cookieKeyFile(), 0o600); } catch { /* Windows 上 chmod 意义有限，失败就算了 */ }
   } catch { return null; }
   return k;
 }
@@ -87,9 +126,9 @@ function saveToggles(toggles) {
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(toggles, null, 2), "utf8");
     fs.renameSync(tmp, file);
-    return { ok: true, file };
+    return { ok: true, file: tidyPath(file) };
   } catch (error) {
-    return { ok: false, file, error: String(error?.message ?? error) };
+    return { ok: false, file: tidyPath(file), error: tidyText(String(error?.message ?? error)) };
   }
 }
 
@@ -206,7 +245,9 @@ export function apply(ctx, config = {}) {
         profileId: k.profileId,
         authSource: k.authSource,
         // 手动 Cookie 每次现解、只在这一刻存在于内存，用完随对象一起被回收
-        manualCookies: k.authSource === "app" ? null : manualCookies(),
+        // manualCookies() 现在返回的是 { cookies, why }，这里只要那份数组；
+      // 直接传对象会让上游把「解不开」当成「有 Cookie」，然后报一句莫名其妙的登录失效。
+      manualCookies: k.authSource === "app" ? null : manualCookies().cookies,
       });
       runtime.appAvailable = !!next.dir && (next.profiles?.length ?? 0) > 0;
       runtime.channel = next;
@@ -270,7 +311,8 @@ export function apply(ctx, config = {}) {
         ok: true,
         at: Date.now(),
         account: info?.displayName || ch.profiles.find(p => p.active)?.displayName || "(未命名账号)",
-        accountId: info?.bceAccountId || info?.bceUserId || "",
+        // 账号主键不进 runtime.credit：它原先只是被存下来、没有任何地方用，
+        // 却随 snapshot 整包发给页面 —— 纯泄漏面。别在这里加回来。
         available: sum.available,
         grantedTotal: sum.grantedTotal,
         usedTotal: sum.usedTotal,
@@ -281,11 +323,11 @@ export function apply(ctx, config = {}) {
         totalCount: sum.totalCount ?? (sum.packages?.length ?? 0),
         unrecognizedStatus: sum.unrecognizedStatus ?? [],
         expiredHeld: sum.expiredHeld ?? 0,
-        consumed24h: Number(usage24h?.consumedPoints ?? 0),
-        consumed7d: Number(usage7d?.consumedPoints ?? 0),
+        consumed24h: upstream.toNum(usage24h?.consumedPoints),
+        consumed7d: upstream.toNum(usage7d?.consumedPoints),
         recentUsage: (usage7d?.list ?? []).slice(0, 12).map(r => ({
           at: r.createdAt,
-          points: Number(r.pointsChange ?? 0),
+          points: upstream.toNum(r.pointsChange),
           conversation: r.conversationName || "",
           kind: r.skillAPICode ? "技能使用" : "模型调用",
         })),
@@ -534,17 +576,7 @@ export function apply(ctx, config = {}) {
     ];
   }
 
-  /**
-   * 把家目录缩成 ~。
-   * 理由不是好看：诊断页那一块是**设计来让人整段贴进问题反馈**的，
-   * 绝对路径里带着这台机器的用户名，贴出去就等于把身份一起发走。
-   */
-  function tidyPath(p) {
-    const home = os.homedir();
-    const s = String(p ?? "");
-    return home && s.startsWith(home) ? "~" + s.slice(home.length).replace(/\\/g, "/") : s;
-  }
-  const tidyText = s => tidyPath(String(s ?? "").replace(new RegExp(os.homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "~"));
+  // tidyPath / tidyText 已提到模块顶层：saveToggles 也在顶层，放这里它够不到。
 
   async function snapshot(view) {
     // 浏览器半段每次读取都会把它的可见性判定带回来（canTell/selected/visible）。
@@ -565,7 +597,7 @@ export function apply(ctx, config = {}) {
         models: (await ctx.llm.listModels(providerId).catch(() => null))?.map(m => m.id) ?? null,
       };
     } catch (error) {
-      hostView = { error: String(error?.message ?? error).slice(0, 200) };
+      hostView = { error: tidyText(String(error?.message ?? error)).slice(0, 200) };
     }
     return {
       ok: ch?.ok === true,
@@ -583,7 +615,10 @@ export function apply(ctx, config = {}) {
       account: runtime.credit?.account ?? ch?.profiles?.find(p => p.active)?.displayName ?? null,
       // 账号主键（accountId / bceUserId）不外发：同源接口是「可能被整段贴出去」的面，
       // 昵称已经够让人认出是哪个号了，主键只是多给一条定位线索。
-      accountIdHidden: runtime.credit?.accountId ? "已隐藏" : "",
+      // 这句必须是**无条件的事实陈述**，不能由「有没有藏起来的值」推导 ——
+      // 上一版写 `runtime.credit?.accountId ? "已隐藏" : ""`，而主键就在同一份响应的
+      // credit.accountId 里发出去了：那句"已隐藏"是假的，比不写更坏。
+      accountIdHidden: "本接口不返回账号主键",
       profiles: ch?.profiles ?? [],
       models: modelViews(),
       // 「选择器里到底有几个」用宿主的答复，不拿自己的 enabled 数自证 ——
@@ -593,8 +628,10 @@ export function apply(ctx, config = {}) {
       catalogAt: Number(toggles.catalogAt) || null,
       credit: runtime.credit,
       creditAt: runtime.creditAt,
-      creditError: runtime.creditError,
-      lastUpstreamError: runtime.lastUpstreamError,
+      // 错误串一律在**出口**收敛成家目录缩写的形态。逐个赋值点补是补不完的 ——
+      // 新增一处忘了就泄，而这一栏是设计来整段贴进问题反馈的。
+      creditError: tidyText(runtime.creditError),
+      lastUpstreamError: tidyText(runtime.lastUpstreamError),
       pollIntervalMs: knobs().pollIntervalMs,
       autoCheckIn: knobs().autoCheckIn,
       // 探测时间以每条记录自己的 observedAt 为准：顶层字段会被旧版进程的写入丢掉。
@@ -618,7 +655,7 @@ export function apply(ctx, config = {}) {
       await refreshCredit({ force: true });
       return { ok: true, granted: granted === true, credit: runtime.credit };
     } catch (error) {
-      return { ok: false, error: String(error?.message ?? error).slice(0, 200) };
+      return { ok: false, error: tidyText(String(error?.message ?? error)).slice(0, 200) };
     }
   }
 
@@ -654,20 +691,49 @@ export function apply(ctx, config = {}) {
     return { ok: saved.ok, error: saved.ok ? null : saved.error, file: saved.file, models: modelViews() };
   }
 
-  /** 运行期旋钮的写入：只认白名单值，落盘失败要如实说。 */
+  /**
+   * 运行期旋钮的写入。**白名单外的值必须回话说清楚，不许静默丢弃** ——
+   * 原先 `POLL_STEPS_MS.includes(...)` 不匹配就直接跳过并回 `ok:true`，
+   * 于是设置页的下拉框会"无声跳回"，用户以为是自己没点中。
+   */
   function setKnobs(patch = {}) {
     const before = { ...toggles };
-    if (MODES.has(patch.mode)) toggles.mode = patch.mode;
-    if (POLL_STEPS_MS.includes(Number(patch.pollIntervalMs))) toggles.pollIntervalMs = Number(patch.pollIntervalMs);
-    if (patch.activeProfileId === null) toggles.activeProfileId = null;
-    else if (typeof patch.activeProfileId === "string") toggles.activeProfileId = patch.activeProfileId;
-    if (patch.autoCheckIn === true || patch.autoCheckIn === false) toggles.autoCheckIn = patch.autoCheckIn;
+    const rejected = [];
+    if (patch.mode !== undefined) {
+      if (MODES.has(patch.mode)) toggles.mode = patch.mode;
+      else rejected.push(`mode 只认 ${[...MODES].join(" / ")}，收到「${String(patch.mode).slice(0, 24)}」没有应用`);
+    }
+    if (patch.pollIntervalMs !== undefined) {
+      const n = Number(patch.pollIntervalMs);
+      if (POLL_STEPS_MS.includes(n)) toggles.pollIntervalMs = n;
+      else rejected.push(`刷新间隔只认 ${POLL_STEPS_MS.map(m => `${m / 60000} 分钟`).join(" / ")}，收到「${String(patch.pollIntervalMs).slice(0, 24)}」没有应用`);
+    }
+    if (patch.activeProfileId !== undefined) {
+      if (patch.activeProfileId === null || patch.activeProfileId === "") toggles.activeProfileId = null;
+      else {
+        // 账号档必须真的存在：只验「是不是字符串」的话，任意垃圾会永久留在状态文件，
+        // 而且界面「本插件在用」会指着那一档，用户以为换成了自己输的号。
+        const known = (runtime.channel?.profiles ?? upstream.listProfiles()?.profiles ?? []);
+        const hit = known.find(p => p.profileId === patch.activeProfileId);
+        if (hit) toggles.activeProfileId = hit.profileId;
+        else rejected.push(`本机没有 id 为「${String(patch.activeProfileId).slice(0, 24)}」的搭子账号档，没有切换`);
+      }
+    }
+    if (patch.autoCheckIn !== undefined) {
+      if (patch.autoCheckIn === true || patch.autoCheckIn === false) toggles.autoCheckIn = patch.autoCheckIn;
+      else rejected.push(`自动签到只认 true / false，收到「${String(patch.autoCheckIn).slice(0, 24)}」没有应用`);
+    }
+    if (patch.authSource !== undefined) {
+      if (AUTH_SOURCES.has(patch.authSource)) toggles.authSource = patch.authSource;
+      else rejected.push(`登录方式只认 ${[...AUTH_SOURCES].join(" / ")}，收到「${String(patch.authSource).slice(0, 24)}」没有应用`);
+    }
     const saved = saveToggles(toggles);
     if (!saved.ok) { Object.assign(toggles, before); return { ok: false, error: saved.error }; }
     // 改了账号档或通道 = 手上的数据全部作废，强制重读
     if (before.activeProfileId !== toggles.activeProfileId || before.mode !== toggles.mode) {
       runtime.channelAt = 0; runtime.creditAt = 0;
     }
+    if (rejected.length) return { ok: false, error: rejected.join("；"), knobs: knobs(), partial: true };
     return { ok: true, knobs: knobs() };
   }
 
@@ -734,11 +800,12 @@ export function apply(ctx, config = {}) {
         row.account = info?.displayName || p.displayName;
         row.bonus = bonus ? { todaySigned: (bonus.signInDays ?? []).includes(localDateKey()), totalTimes: bonus.totalTimes ?? 0, totalPoints: bonus.totalPoints ?? 0 } : null;
       } catch (error) {
-        row.error = String(error?.message ?? error).slice(0, 160);
+        // 这一行会直接渲染在设置页，也会随 accounts 进诊断面 → 必须缩家目录
+        row.error = tidyText(String(error?.message ?? error)).slice(0, 160);
       }
       rows.push(row);
     }
-    runtime.accounts = { at: Date.now(), rows, reason: bundle.reason ?? null };
+    runtime.accounts = { at: Date.now(), rows, reason: bundle.reason ? tidyText(bundle.reason) : null };
     return runtime.accounts;
   }
 
@@ -761,13 +828,15 @@ export function apply(ctx, config = {}) {
   /**
    * 解出用户手动导入的 Cookie —— **只在内存里存在**，每次要用现解，不缓存在字段上，
    * 免得快照、日志、错误信息里无意间把它带出去。
+   * 返回三种状态，不能都压成 null：「没导入」和「导入过但解不开」是两件完全不同的事，
+   * 后者说明密钥文件出问题，用户需要重新导入，而不是以为没导。
    */
   function manualCookies() {
-    if (!toggles.manualCookiesCipher) return null;
-    const key = cookieKey();
-    if (!key) return null;
-    try { return upstream.decryptCookies(toggles.manualCookiesCipher, key); }
-    catch { return null; }
+    if (!toggles.manualCookiesCipher) return { cookies: null, why: "none" };
+    const key = readCookieKey();
+    if (!key) return { cookies: null, why: "key-missing" };
+    try { return { cookies: upstream.decryptCookies(toggles.manualCookiesCipher, key), why: null }; }
+    catch { return { cookies: null, why: "cipher-undecryptable" }; }
   }
 
   /**
@@ -780,7 +849,8 @@ export function apply(ctx, config = {}) {
 
   /** 登录方式与手动 Cookie 的对外形状：只有名字、时间、够不够，绝不带值。 */
   function loginInfo() {
-    const cookies = manualCookies();
+    const m = manualCookies();
+    const cookies = m.cookies;
     const check = cookies ? upstream.checkCookies(cookies) : null;
     return {
       authSource: knobs().authSource,
@@ -788,7 +858,8 @@ export function apply(ctx, config = {}) {
       inUse: authSourceUsedNow(),
       manual: {
         present: !!cookies,
-        readable: cookies !== null || !toggles.manualCookiesCipher,
+        // 三种状态分开报，界面才有话可说
+        state: m.why ?? (check?.ok ? "ok" : "incomplete"),
         count: cookies?.length ?? 0,
         names: toggles.manualCookieNames,
         addedAt: toggles.manualCookiesAt || null,
@@ -962,9 +1033,11 @@ export function apply(ctx, config = {}) {
     const ownOrigin = (() => { try { return scoped.webServer.getOrigin(); } catch { return null; } })();
     const sameOrigin = request => {
       const reqOrigin = request.headers.get("origin");
-      // 同源 GET 浏览器通常不带 Origin；POST 必须带且等于自家地址，否则等于给本机任意网页开了写口。
-      if (!reqOrigin) return true;
-      return !ownOrigin || reqOrigin === ownOrigin;
+      // 原先是 `return !ownOrigin || reqOrigin === ownOrigin` —— 拿不到自家地址就一律放行，
+      // 属于 fail-open：宿主接口一变，本机任意网页都能读写这个面。
+      // 现在拿不到就只认「根本没带 Origin」的请求（浏览器同源 GET 通常不带，跨源一定带）。
+      if (!ownOrigin) return !reqOrigin;
+      return !reqOrigin || reqOrigin === ownOrigin;
     };
     const json = (value, status = 200) => new Response(JSON.stringify(value), {
       status, headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -987,7 +1060,11 @@ export function apply(ctx, config = {}) {
         };
         if (req.method !== "POST") return write(405, { ok: false, error: "method-not-allowed" });
         const originHeader = req.headers.origin;
-        if (originHeader && ownOrigin && originHeader !== ownOrigin) return write(403, { ok: false, error: "forbidden-origin" });
+        // 写口比读口更严：必须带 Origin 且等于自家地址；**拿不到自家地址就一律拒绝**。
+        // 原先 `originHeader && ownOrigin && …` 在 ownOrigin=null 时直接放过，
+        // 等于宿主接口一变，本机任意网页都能改设置、导入 Cookie、点签到。
+        if (!ownOrigin) return write(403, { ok: false, error: "forbidden-origin", hint: "暂时取不到 DSH 自己的地址，为避免本机任意网页都能写，这个面先关着" });
+        if (!originHeader || originHeader !== ownOrigin) return write(403, { ok: false, error: "forbidden-origin" });
         let body;
         try { const raw = await readBody(req); body = raw ? JSON.parse(raw) : {}; }
         catch { return write(400, { ok: false, error: "bad-json" }); }

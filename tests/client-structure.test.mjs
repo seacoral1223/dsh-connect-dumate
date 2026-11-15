@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 
+// 未捕获的 promise reject 一律算失败。async handler 里抛的错不会走到任何同步 catch，
+// 没有这条兜底，「无抛出」就只是「同步没炸」。
+const unhandled = [];
+process.on("unhandledRejection", reason => unhandled.push(String(reason?.message ?? reason)));
+
 const src = fs.readFileSync(path.join(import.meta.dirname, "..", "client.js"), "utf8");
 
 // --- 最小假 React：组件都是普通函数；createElement 顺手把函数组件按名字记下来
@@ -13,6 +18,7 @@ const components = {};
 // 「点一下就整枚消失」那个 ReferenceError 就是这么漏过去的。
 let forcedTab = "accounts";
 let effectRuns = 0;
+const effectCleanups = [];
 let hookState = null;
 const FakeReact = {
   createElement: (type, props, ...children) => {
@@ -37,13 +43,29 @@ const FakeReact = {
     return { type: type.name || "Component", props: merged ?? {}, children: [out] };
   },
   Fragment: "Fragment",
-  useState: init => {
+  useState: (init, name) => {
     const i = hookState.index++;
-    if (!(i in hookState.slots)) hookState.slots[i] = typeof init === "function" ? init() : init;
+    if (name) (hookState.names ??= {})[i] = name;
+    if (!(i in hookState.slots)) {
+      const v0 = typeof init === "function" ? init() : init;
+      (hookState.inits ??=[])[i] = v0;
+      // seed 优先级：按状态变量名 → 按初值 → 按序号（后两者只为兼容旧写法）
+      const byName = hookState.byName && name in hookState.byName;
+      hookState.slots[i] = byName ? hookState.byName[name]
+        : hookState.byInit && String(v0) in hookState.byInit ? hookState.byInit[String(v0)]
+        : v0;
+    }
     const setter = v => { hookState.dirty = true; hookState.slots[i] = typeof v === "function" ? v(hookState.slots[i]) : v; };
     return [hookState.slots[i], setter];
   },
-  useEffect: fn => { effectRuns++; const c = fn(); return typeof c === "function" ? c : undefined; },
+  // 真跑 cleanup：原先只把函数返回出去、从来不调用，于是胶囊里那个 setInterval
+  // 一直挂在事件循环上，整个测试进程跑完也不退出（CI 会直接超时）。
+  useEffect: fn => {
+    effectRuns++;
+    const c = fn();
+    if (typeof c === "function") effectCleanups.push(c);
+    return c;
+  },
   useCallback: fn => fn,
   useRef: init => {
     const i = hookState.index++;
@@ -57,11 +79,12 @@ const FakeReact = {
  * 渲染一个函数组件，支持状态更新后重渲染。
  * 关键：状态必须**跨次渲染保持** —— 每次重置的话，点一下翻起来的 open 会在下一次渲染前就被抹掉，
  * 「点击后」那条分支等于根本没测（这正是上一版漏掉 ReferenceError 的第二个原因）。
- * seed 是 `{ hook 序号: 初值 }`（useState 的调用顺序）。
- * SettingsPage 的顺序：0/1/2 = useDumate 的 state/busy/error，3 = 当前分栏，4 = copied。
+ * seed 三种给法：`{ hook 序号: 值 }`（最脆，别再新增）、`byInit`（按初值）、
+ * **`bySite`（按 client.js 的行号片段，首选）** —— 自定义 hook 与宿主共用计数器，
+ * 数序号会被任何一次加 hook 悄悄挪走。
  */
-function renderer(component, props, seed = {}) {
-  const st = { slots: { ...seed }, refs: {}, index: 0, dirty: true };
+function renderer(component, props, seed = {}, byInit = null, byName = null) {
+  const st = { slots: { ...seed }, refs: {}, index: 0, dirty: true, byInit, byName };
   return {
     st,
     render() {
@@ -80,7 +103,7 @@ function renderer(component, props, seed = {}) {
 }
 
 /** 一次性渲染（不需要保留状态时用这个）。 */
-function mount(component, props, seed = {}) { return renderer(component, props, seed).render(); }
+function mount(component, props, seed = {}, byInit = null, byName = null) { return renderer(component, props, seed, byInit, byName).render(); }
 
 function findButton(tree, labelIncludes = "") {
   const out = [];
@@ -106,7 +129,20 @@ globalThis.fetch = async () => ({
   ok: true,
   json: async () => ({ ok: true, providerId: "dumate", models: [], profiles: [], credit: null, checks: [] }),
 });
-new Function("window", "fetch", "globalThis", src)(fakeWindow, globalThis.fetch, globalThis);
+// 把 `const [open, setOpen] = useState(...)` 改写成带名字的探针，于是 seed 可以按
+// **状态变量名**给（open / tab / state），和 hook 的调用顺序彻底无关。
+// 原先按序号 seed：往 useDumate 里加一个 useRef 就会把后面的槽全挪走，
+// 测试随即误报「分栏找不到」「面板没按钮」—— 看着像功能坏了，其实是测试在数行数。
+const HOOK_NAMES = [];
+globalThis.__namedHook = (name, init) => {
+  HOOK_NAMES.push(name);
+  return FakeReact.useState(init, name);
+};
+const instrumented = src.replace(
+  /const \[(\w+), (set\w+)\] = useState\(/g,
+  'const [$1, $2] = globalThis.__namedHook("$1", ',
+);
+new Function("window", "fetch", "globalThis", instrumented)(fakeWindow, globalThis.fetch, globalThis);
 assert.equal(loaded.id, "dsh-connect-dumate", "模块 id 必须等于包名");
 
 const ctx = {
@@ -160,8 +196,9 @@ const tabs = [
 // 再各自手动调一次，确认不抛、且返回节点。
 const tabKeys = { AccountsTab: "accounts", CreditsTab: "credits", ModelsTab: "models", CapabilitiesTab: "capabilities", DoctorTab: "doctor" };
 for (const [name, props] of tabs) {
-  // 设置页一次只渲染当前分栏，所以按 hook 顺序把第 3 个 state（当前分栏）喂成目标值
-  mount(page.Component, { t }, { 3: tabKeys[name] });
+  // 设置页一次只渲染当前分栏。按**初值**把那个 tab 状态改到目标分栏，
+  // 不再数 hook 序号（数序号会被组件里新增 hook 悄悄挪走）。
+  mount(page.Component, { t }, {}, null, { tab: tabKeys[name] });
   assert.ok(typeof components[name] === "function", `找不到分栏组件 ${name}（tab=${tabKeys[name]}）`);
   assert.ok(mount(components[name], props) !== undefined, `${name} 没有返回节点`);
 }
@@ -237,10 +274,12 @@ assert.ok(openedJson.includes("page.title"), "面板要有标题");
 assert.ok(openedJson.includes("common.loading") || openedJson.includes("credits.available"), "面板要有内容分支");
 
 // 有数据时再点一次：刷新按钮必须真的在（守 Panel 的完整渲染路径，不只是它没崩）
-// Capsule 的 hook 序号（useState 与 useRef 共用一个计数器，按调用顺序）：
-// 0=probedId, 1=probedOnce(ref), 2=viewRef(ref), 3=state, 4=busy, 5=error, 6=open, 7=timerRef(ref)
+// 按源码行喂 hook 状态，不数序号：useDumate 的槽位和 Capsule 共用计数器，
+// 加一个 useRef 就会把序号挪走（上一版就是这么误报成"按钮没了"）。
 const richState = { ok: true, account: "测试账号", credit: { available: 1234.5, consumed24h: 1, consumed7d: 2, packages: [], bonus: { todaySigned: false } }, models: [], profiles: [] };
-const viewRich = renderer(pill.Component, pillProps, { 3: richState, 6: true });
+// 序号 seed 天生脆：组件里加一个 hook 就会把后面的槽挪走。脆可以，**脆且无声**不行 ——
+// 所以先把 hook 形状钉住，形状变了就报「形状变了」，而不是让人去查"按钮怎么没了"。
+const viewRich = renderer(pill.Component, pillProps, {}, null, { open: true, state: richState });
 const richTree = JSON.stringify(viewRich.render());
 assert.ok(richTree.includes("panel.refresh"), "有数据时面板该有刷新按钮");
 assert.ok(richTree.includes("1,234.5"), "面板该把余额渲染出来");
@@ -251,7 +290,7 @@ assert.doesNotThrow(() => { closeBtn.props.onClick(); view.render(); }, "收起�
 
 // 少了注入的 t 也必须渲染得出来（退回内置文案）—— 座位不能因为宿主没注入就整枚消失。
 // 上一版正是这样崩的：Capsule 裸用 apply() 作用域里的 t，点开即 ReferenceError，React 拆掉整个座位。
-const noT = renderer(pill.Component, { useProjection: () => ({ next: { provider: "dumate" } }) }, { 3: richState, 6: true });
+const noT = renderer(pill.Component, { useProjection: () => ({ next: { provider: "dumate" } }) }, {}, null, { open: true, state: richState });
 let degraded = null;
 assert.doesNotThrow(() => { degraded = noT.render(); }, "没有 t 时不该崩");
 // 兜底生效的证据：渲染出来的是内置中文原文（而不是 key），说明它走了 fallbackT
@@ -278,12 +317,20 @@ function collectInteractive(node, out = []) {
 const tabSeed = { accounts: 3, credits: 3, models: 3, capabilities: 3, doctor: 3 };
 for (const [key] of Object.entries(tabKeys).map(([n, k]) => [k, n])) {
   const handlers = [];
-  // 每个分栏单独渲染（第 3 个 hook 是 SettingsPage 的 tab 状态；前面 useDumate 占 0/1/2）
-  const v = renderer(page.Component, { t }, { 0: rich, 3: key });
+  const v = renderer(page.Component, { t }, {}, null, { state: rich, tab: key });
   const tree = v.render();
   collectInteractive(tree, handlers);
   let threw = null;
-  for (const h of handlers) { try { h(); v.render(); } catch (e) { threw = e; break; } }
+  for (const h of handlers) {
+    try {
+      // 必须 await：handler 多是 async（导入 Cookie、读积分、切登录方式）。
+      // 原先只 `try { h(); }` —— 同步 catch 抓不到 promise reject，
+      // 于是 AccountsTab 里那个 `setBusy is not defined`（导入按钮 100% 点不动）
+      // 在「12 个控件全部点过，无抛出」的绿灯下活了整整一个版本。
+      await h();
+      v.render();
+    } catch (e) { threw = e; break; }
+  }
   if (key === "doctor") {
     // 复制按钮走 navigator.clipboard，测试环境没有 → 组件必须自己吞掉，不能冒出来
     assert.ok(true, "clipboard 缺失已被吞掉（没抛就说明吞了）");
@@ -334,6 +381,23 @@ for (const [key] of Object.entries(tabKeys).map(([n, k]) => [k, n])) {
 
 // --- 卸载
 for (const d of disposers) d();
+// 卸载 useEffect：不清就留着真定时器，进程永不退出
+let cleanupThrew = null;
+for (const c of effectCleanups) { try { c(); } catch (e) { cleanupThrew = e; } }
+assert.ok(!cleanupThrew, `useEffect 的 cleanup 抛了：${cleanupThrew?.message}`);
+assert.ok(effectCleanups.length > 0, "一个 useEffect 都没注册，这条断言没意义");
+console.log(`  ok   ${effectCleanups.length} 个 useEffect 的 cleanup 都跑掉了（不留悬挂定时器）`);
 assert.ok(effectRuns > 0, "effect 没跑过");
 console.log(`PASS：座位 ${names.join(" / ")}；分栏 ${tabs.length} 个（空数据 + 真实数据各渲染一遍）；胶囊按 provider 显隐；disposer ${disposers.length} 个可跑`);
-process.exit(0);
+// 让事件循环自然跑完，微任务里的 reject 才有机会被钩到。
+// 原先这里直接 process.exit(0) —— 等于把所有 pending rejection 一起带走，绿灯是假的。
+setImmediate(() => {
+  if (unhandled.length) {
+    console.log(`\nFAIL：${unhandled.length} 个未捕获的异步错误：`);
+    for (const u of unhandled.slice(0, 5)) console.log("  " + u.slice(0, 170));
+    process.exitCode = 1;
+    return;
+  }
+  console.log("  ok   全程没有未捕获的异步错误");
+  process.exitCode = 0;
+});

@@ -33,7 +33,8 @@
 
 1. **DeepSeek Harness**（桌面版即可）。
 2. **百度搭子桌面版**，装好并**登录过一次**。插件不注册账号、不代你登录、不接受手动填 token —— 它读的就是这台机器上那个登录态，所以**你用自己的账号，我用我的账号**，互不影响。
-3. 支持的系统：Windows / macOS / Linux。插件按候选目录去找 App 的用户数据（`%APPDATA%`、`%LOCALAPPDATA%`、`~/Library/Application Support`、`$XDG_CONFIG_HOME`/`~/.config`，每处试 `qianfan-desktop-app` / `DuMate` / `qianfan_desk_xdg` 三种名字），**判据是里面的 `auth.json` 在不在**。找不到就在诊断里列出找过哪些路径；非标准安装可以用环境变量 `DUMATE_USER_DATA` 直接指到那个目录。
+   不想装桌面版也行：设置里可以**手动导入两个 Cookie**（`bce-sessionid` 与 `bce-user-info`），见下面「两种登录方式」。
+3. **只有 Windows 实机验证过。** macOS / Linux 是按 Electron 惯例去探测候选目录（`~/Library/Application Support`、`$XDG_CONFIG_HOME`/`~/.config`，每处试 `qianfan-desktop-app` / `DuMate` / `qianfan_desk_xdg` 三种名字，判据是里面的 `auth.json` 在不在），**有单元测试但没有真机**，所以这里不写成"支持三平台"。找不到就在诊断里列出找过哪些路径；非标准安装可以用环境变量 `DUMATE_USER_DATA` 直接指到那个目录（指错了不会回退去扫全机）。
 
 ## 装上
 
@@ -43,9 +44,9 @@
 
 ```powershell
 # 1) 下载并解压
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.8
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.9
 tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
-# 解压出来是目录 dsh-connect-dumate-0.9.8
+# 解压出来是目录 dsh-connect-dumate-0.9.9
 ```
 
 2) 打开 DSH 的插件管理（**Plugins → Add plugin**），选那个解压出来的目录。
@@ -54,12 +55,12 @@ tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
 **B. git clone**
 
 ```bash
-git clone --branch v0.9.8 https://github.com/seacoral1223/dsh-connect-dumate.git
+git clone --branch v0.9.9 https://github.com/seacoral1223/dsh-connect-dumate.git
 ```
 
 然后同样在 **Plugins → Add plugin** 里选这个目录，重启。
 
-> 装完可以自己在目录里跑 `npm test`（12 个回归，不联网、不碰你的账号数据）验证包是完整的。
+> 装完可以自己在目录里跑 `npm test`（**15 个回归**）验证包是完整的。其中 `coldstart` / `lifecycle` / `manual-login` / `disabled` 会真连一次搭子上游（读目录、换 token、对照组发请求），其余全部离线；所有用例会先把 `DSH_HOME` 隔离到临时目录，**不会改你的账号数据与勾选**。
 
 装好之后你应该看到：
 
@@ -309,7 +310,7 @@ qwen3.5-27b                                    ← 同上
 
 ## 已知边界
 
-1. **冷启动必须先有目录可列**：DSH 的选择器「空分组直接隐藏」（`dsh-client-ui-model-selection` README 原文：*Empty groups are hidden*）。所以插件把上一次成功的模型目录写进 `~/.dsh/dumate-state.json` 的 `lastCatalog`，`listModels()` 在网络刷新还在飞的时候先用它顶上；实测两种情况都在 0.8 秒内交出 22 个模型（`tests/coldstart.test.mjs`，用假 ctx 直接问适配器）。
+1. **冷启动必须先有目录可列**：DSH 的选择器「空分组直接隐藏」（`dsh-client-ui-model-selection` README 原文：*Empty groups are hidden*）。所以插件把上一次成功的模型目录写进 `~/.dsh/dumate-state.json` 的 `lastCatalog`，`listModels()` 在网络刷新还在飞的时候先用它顶上。`tests/coldstart.test.mjs` 钉的是这件事本身 —— **第一帧必须在 500ms 内交得出非空目录**（实测 2ms；没有缓存时退到内置的 22 行静态目录，同样非空）。以前这里写的是"0.8 秒内交出 22 个"，那是三个互相打脸的数字之一，而且测试只打印耗时、从不断言，等于没钉住任何东西。
 2. **改了代码必须重启 DSH** 才会加载新的 JS 世代；GUI 页面本身在选择器上会跟着 `llm/adapters-updated` / `llm/models-updated` 重拉，不用刷新页面。
 3. **模式没热切换**：改 `mode` / `pollIntervalMs` 要重启 DSH。运行期热改只覆盖模型勾选、图片开关与显示名（那些落 `~/.dsh/dumate-state.json`）。
 4. 网关 token 的寿命由上游 `expired_at` 给（实测同一 token 会原样重复返回，本次剩 ~8 小时）；插件在到期前 3 分钟换新，401 时作废重取，再失败就报「请在搭子 App 里重新登录」，不静默。

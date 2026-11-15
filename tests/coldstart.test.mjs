@@ -60,6 +60,12 @@ console.log(`[${mode}] 第一次网络刷新还在飞的时候问选择器：`);
 const t0 = Date.now();
 const immediate = await capturedAdapter.listModels("dumate");
 console.log(`   listModels -> ${immediate.length} 个，用时 ${Date.now() - t0}ms；前 4：${immediate.slice(0, 4).map(m => m.id).join(", ")}`);
+// 原先这里只 console.log 耗时、没有任何时间断言，于是 README / tests/README / CHANGELOG
+// 里那三个互相打脸的数字（0.8 秒 / 1ms / 1161ms）一个都没被钉住。
+// 断言的是**语义**：第一帧不许为了等网络而空着 —— 空组会被宿主整组隐藏。
+const coldMs = Date.now() - t0;
+if (coldMs > 500) { console.log(`FAIL 第一帧等了 ${coldMs}ms（>500）—— 冷启动期间选择器会是空的`); process.exit(1); }
+console.log(`   ok   第一帧 ${coldMs}ms 内交得出目录（上限 500ms）`);
 console.log("   resolveModel(glm-5) ->", JSON.stringify(await capturedAdapter.resolveModel("dumate", "glm-5")));
 console.log("   providerInfo ->", JSON.stringify(capturedAdapter.providerInfo("dumate")));
 

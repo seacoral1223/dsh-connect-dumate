@@ -41,19 +41,36 @@ const APP_DATA_DIRNAME = "qianfan-desktop-app";
  */
 const INNER_DIR_CANDIDATES = ["qianfan_desk_xdg", "xdg", "data"];
 
+/** 某个内层目录下能不能找到 opencode.json（可能在再下一层的 uid 目录里）。 */
+function hasCatalogUnder(base, probe) {
+  const hit = p => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+  if (hit(path.join(base, ...probe))) return true;
+  // 真实形状是 <inner>/<bceUserId>/config/opencode/opencode.json。
+  // 只查 <inner>/config/... 的话这段扫描永远命中不了 —— 等于死代码，
+  // 结果永远是下面硬编码的第 0 个候选，换个内层名就彻底找不到通道 B 的目录。
+  let ents;
+  try { ents = fs.readdirSync(base, { withFileTypes: true }); } catch { return false; }
+  return ents.some(e => e.isDirectory() && hit(path.join(base, e.name, ...probe)));
+}
+
 function innerDir(dir, probe) {
+  // dir 可能是 null（这台机器没装桌面版，只有手动导入的 Cookie）。
+  // 原先直接 path.join(null, …) 抛 ERR_INVALID_ARG_TYPE，整条通道判定崩掉，
+  // 报出去的还是一句 Node 英文 —— 走方式二、不装 App 的用户第一条就会撞上。
+  if (typeof dir !== "string" || !dir) return null;
   for (const name of INNER_DIR_CANDIDATES) {
-    const p = path.join(dir, name, ...probe);
-    try { if (fs.statSync(p).isFile()) return path.join(dir, name); } catch { /* 试下一个 */ }
+    const base = path.join(dir, name);
+    if (hasCatalogUnder(base, probe)) return base;
   }
   try {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
-      const p = path.join(dir, e.name, ...probe);
-      try { if (fs.statSync(p).isFile()) return path.join(dir, e.name); } catch { /* 继续 */ }
+      if (hasCatalogUnder(path.join(dir, e.name), probe)) return path.join(dir, e.name);
     }
   } catch { /* 目录读不了就算了 */ }
-  return path.join(dir, INNER_DIR_CANDIDATES[0]);
+  // 一个都没命中：别再返回硬编码的第 0 个候选假装存在 ——
+  // 调用方需要 null 才能说清「这台机器没有本地代理目录」。
+  return null;
 }
 const PROVIDER_KEY = "QianfanPersonalQuota";
 const CLOUD_API_BASE = "https://console.bce.baidu.com";
@@ -289,6 +306,10 @@ function cloudHeaders(cookies, hostname, meta, version) {
 
 function readCatalog(dir, preferredUserId) {
   const base = innerDir(dir, ["config", "opencode", "opencode.json"]);
+  // innerDir 现在会返回 null（没装 App / 目录里根本没有代理配置）。
+  // 以前它总返回一个拼出来的假路径，于是这里只是"读不到文件"；
+  // 现在要老实返回 null，让上层说清「这台机器没有本地代理目录」。
+  if (!base) return null;
   const candidates = [];
   if (preferredUserId) candidates.push(path.join(base, preferredUserId, "config", "opencode", "opencode.json"));
   try {
@@ -481,7 +502,10 @@ class CloudClient {
         err.code = "DUMATE_BAD_RESPONSE"; throw err;
       }
       if (json.success === false || (typeof json.code === "number" && json.code !== 0)) {
-        const msg = String((json.message && (json.message.global || json.message)) || json.error || "上游返回错误");
+        // 必须走 describeCloudError：登录失效时上游的 message 是**对象**（{redirect:…}），
+        // 原先 String(obj) 得到 "[object Object]"，于是工具、命令、签到按钮、诊断表
+        // 七个用户可见面同时说「百度搭子接口错误 : [object Object]」—— 一句人话都没有。
+        const msg = describeCloudError(json, r.status);
         this.lastError = { kind: "api", status: r.status, code: json.code, message: msg.slice(0, 200) };
         const err = new Error(`百度搭子接口错误 ${json.code ?? ""}: ${msg.slice(0, 160)}`);
         err.code = "DUMATE_UPSTREAM_ERROR"; err.upstream = this.lastError; throw err;
@@ -638,8 +662,13 @@ function clientForProfile(profileId, preloaded) {
   if (!bundle.authJson || !bundle.keyBuf) return null;
   const wanted = profileId ? bundle.profiles.find(p => p.profileId === profileId) : bundle.profiles.find(p => p.active) || bundle.profiles[0];
   if (!wanted || !wanted.usable) return null;
+  // 必须回到 auth.json 里的**原始**档取密文：上面那份 profiles 是给界面用的精简形状，
+  // 不含 encryptedCookies。拿它喂 cookieCipherFor，非 active 档会落到
+  // `profileId === activeProfileId ? authJson.cookies : ""` 的空串分支 ——
+  // 于是「选第二个账号」这条路必坏，而只有一个档的机器上永远看不见（本机正是这种）。
+  const raw = accountProfiles(bundle.authJson).find(p => p.profileId === wanted.profileId) || null;
   let cookies;
-  try { cookies = decryptCookies(cookieCipherFor(bundle.authJson, wanted), bundle.keyBuf); }
+  try { cookies = decryptCookies(cookieCipherFor(bundle.authJson, raw), bundle.keyBuf); }
   catch { return null; }
   const meta = readDeviceMeta(bundle.dir);
   return {
@@ -826,5 +855,5 @@ module.exports = {
   listProfiles, clientForProfile,
   domainMatches, buildCookieHeader, extractCsrfToken, readDeviceMeta, cloudHeaders,
   readCatalog, normalizeModelEntries, isUserFacingModel, isAutoRouterModel, portOf, probeLocalProxy, FALLBACK_MODELS,
-  GatewayToken, CloudClient, summarizePackages, fetchGatewayModels, inspect,
+  GatewayToken, CloudClient, summarizePackages, toNum, describeCloudError, fetchGatewayModels, inspect,
 };
