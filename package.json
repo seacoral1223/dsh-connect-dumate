@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-dumate",
   "displayName": "DSH Connect DuMate",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "description": "把本机登录的百度搭子（DuMate）接入 DeepSeek Harness：模型直接进 DSH 的模型选择器，默认走云端模型网关（搭子 App 不用开着），积分余额、积分包、每日签到与近 7 天消耗作为只读读数显示在输入框胶囊里。",
   "keywords": [
     "dsh-plugin",

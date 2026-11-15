@@ -438,14 +438,20 @@ export function apply(ctx, config = {}) {
    * 上游慢或挂会把整组拖进 failures。只有「手里什么都没有」的首帧才等一次刷新，
    * 而且最多等 3 秒，等不到就用静态兜底。
    */
-  async function getState({ awaitChannel = false } = {}) {
+  async function getState({ awaitChannel = false, wait = true } = {}) {
     if (awaitChannel) {
       // 对话路径：端口/token 必须是现读的，不能拿旧通道发请求。
       await refreshChannel().catch(() => {});
     } else {
       const haveSomething = (runtime.channel?.models?.length ?? 0) > 0 || (toggles.lastCatalog?.length ?? 0) > 0;
       if (!haveSomething) {
-        if (runtime.inflight) {
+        // **选择器这一路绝不等待网络**。适配器手里有静态兜底目录，永远不会交空数组，
+        // 所以等首次自检毫无收益 —— 实测新机器（空 DSH_HOME）上这里会阻塞 1.4 秒，
+        // 而宿主对零模型分组是直接隐藏的：那一组模型会凭空晚出现 1.4 秒。
+        // 真实目录到了会通过 llm/models-updated 广播，选择器自己会补上。
+        if (!wait) {
+          if (!runtime.inflight) void refreshChannel().catch(() => {});
+        } else if (runtime.inflight) {
           try { await Promise.race([runtime.inflight, new Promise(r => setTimeout(r, 3000))]); } catch { /* 用兜底答 */ }
         } else {
           await refreshChannel().catch(() => {});
@@ -471,7 +477,8 @@ export function apply(ctx, config = {}) {
   if (enabled) {
     const adapter = new DuMateAdapter({
       version: bundleVersion(),
-      getState: () => getState(),
+      // 选择器问目录：不等网络。没有缓存就用静态兜底，真目录到了再广播。
+      getState: () => getState({ wait: false }),
       getLiveState: () => getState({ awaitChannel: true }),
       resolveImage: async ref => {
         const attachments = ctx.get("attachments");
