@@ -12,8 +12,12 @@ try {
   const src = path.join(REAL_DIR, "dumate-state.json");
   if (fs.existsSync(src)) {
     const j = JSON.parse(fs.readFileSync(src, "utf8"));
-    // 故意摆一个烂摊子：同一后端的五行全开，独有后端反而被关掉
-    j.disabledModels = ["glm-53", "kimi-k3", "doubao-seed-2-0-pro"];
+    // 前置条件必须**自己造**，不能假设真机的勾选状态长什么样。
+    // 之前这里只关掉三行、指望剩下的重复后端是开着的 —— 一旦用户点过「推荐（去重）」，
+    // 那些重复行就全关了，测试的前置条件直接不成立（下载副本上就是这么挂的）。
+    // 现在显式清空 disabledModels：全开，同一后端的几行必然都在，场景确定。
+    j.disabledModels = [];
+    j.routerEnabled = [];
     fs.writeFileSync(path.join(SANDBOX, "dumate-state.json"), JSON.stringify(j));
   }
 } catch { /* 没副本也能跑，插件会退回静态兜底目录 */ }
@@ -70,7 +74,14 @@ async function state() {
 
 const before = await state();
 const flashRows = before.models.filter(m => m.enabled && m.realModel === "deepseek-v4.1-flash-low-latency-1017").map(m => m.key);
-assert.ok(flashRows.length >= 3, `前置条件没造出来：同一后端应该有好几行都开着，实际 ${flashRows.join(",")}`);
+if (flashRows.length < 3) {
+  // 这台机器还没学到后端映射（没真发过请求、也没缓存目录），去重这件事无从验证。
+  // 明确 SKIP 并退出 0 —— 让「没条件测」和「测过且通过」在日志上长得不一样。
+  console.log(`SKIP：本机没有该后端的重复行可造（学到 ${flashRows.length} 行），「按后端去重」需要真实后端映射才测得了`);
+  for (const d of disposers.slice().reverse()) { try { await d(); } catch { /* 卸载失败不影响结论 */ } }
+  fs.rmSync(SANDBOX, { recursive: true, force: true });
+  process.exit(0);
+}
 
 const r = await action({ action: "defaults", kind: "recommended" });
 assert.ok(r.ok, `推荐失败：${r.error}`);
