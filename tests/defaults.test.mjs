@@ -96,6 +96,19 @@ assert.equal(all.kept, all.state.models.length, "全选应把每一行都点上�
 const none = await action({ action: "defaults", kind: "none" });
 assert.equal(none.kept, 0, "全不选应清空");
 
+// 诊断表必须跟着勾选现算。之前「选择器内启用数」是启动自检时算一次就冻住的，
+// 点完推荐启用数已经变了、诊断表还显示旧数字 —— 排障时陈旧数字比没有更坏。
+const back2 = await action({ action: "defaults", kind: "recommended" });
+const rowOf = (state, key) => (state.checks ?? []).find(r => r[0] === key)?.[1];
+const enabledNow = back2.state.models.filter(m => m.enabled).length;
+assert.equal(Number(rowOf(back2.state, "选择器内启用数")), enabledNow,
+  `诊断表的启用数必须是现值（表=${rowOf(back2.state, "选择器内启用数")} 实际=${enabledNow}）`);
+const allState = (await action({ action: "defaults", kind: "all" })).state;
+assert.equal(Number(rowOf(allState, "选择器内启用数")), allState.models.length,
+  "全选后诊断表要立刻反映为全部行数");
+console.log(`  ok   诊断表现算：推荐后=${rowOf(back2.state, "选择器内启用数")} 全选后=${rowOf(allState, "选择器内启用数")}/${allState.models.length}`);
+await action({ action: "defaults", kind: "recommended" });
+
 console.log(`PASS：乱局 ${flashRows.length} 行同后端 → 推荐后 ${enabled.length} 行、后端互不相同、幂等、广播 ${emitted.length} 次`);
 console.log("  推荐启用：", enabled.map(m => `${m.key}→${m.realModel || "?"}`).join("  "));
 for (const d of disposers.reverse()) { try { await d(); } catch { /* 卸载失败不影响结论 */ } }

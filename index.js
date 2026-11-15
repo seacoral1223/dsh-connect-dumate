@@ -463,29 +463,7 @@ export function apply(ctx, config = {}) {
       void (async () => {
         await refreshChannel({ force: true });
         await refreshCredit({ force: true });
-        const ch = runtime.channel;
-        runtime.checks = [
-          ["选定模式", `${knobs().mode}（运行期可改；出厂默认来自 patch）`],
-          ["实际通道", ch?.channel?.kind === "gateway" ? "云端网关（搭子 App 可以不开）" : ch?.channel?.kind === "local" ? "搭子本地代理" : "无"],
-          ["网关地址", ch?.channel?.baseURL ?? "未取到"],
-          ["积分上游", "https://console.bce.baidu.com/api/dumate/…"],
-          ["网关 token", ch?.gatewayTokenInfo?.present ? `有效，剩 ${ch.gatewayTokenInfo.minutesLeft} 分钟` : `无（${ch?.gatewayTokenInfo?.error ?? "未取"}）`],
-          ["登录账号", runtime.credit?.account ?? ch?.profiles?.find(p => p.active)?.displayName ?? "未登录"],
-          ["Cookie 条数", String(ch?.cookieCount ?? 0)],
-          ["目录模型总数", String(ch?.models?.length ?? 0)],
-          ["目录来源", ch?.models?.length ? "本次现读" : (toggles.lastCatalog?.length ? `上次缓存（${new Date(toggles.catalogAt || 0).toLocaleString("zh-CN")}）` : "无")],
-          ["选择器内启用数", String(modelViews().filter(m => m.enabled).length)],
-          ["积分刷新间隔", `${Math.round(knobs().pollIntervalMs / 1000)} 秒`],
-          ["最近上游错误", runtime.lastUpstreamError ?? "无"],
-          ["浏览器胶囊判定", runtime.pillView ? `${runtime.pillView.raw}（${new Date(runtime.pillView.at).toLocaleTimeString("zh-CN")}）` : "浏览器还没回报过（页面没开或没加载到本插件的客户端）"],
-          ["登录方式", `${knobs().authSource}（本次实际用的：${ch?.authSource ?? "还没自检"}）`],
-          ["手动 Cookie", loginInfo().manual.present
-            ? `已导入 ${loginInfo().manual.count} 条（${loginInfo().manual.names.join(", ") || "无名"}），${new Date(loginInfo().manual.addedAt).toLocaleString("zh-CN")}；够用=${loginInfo().manual.sufficient ? "是" : `缺 ${loginInfo().manual.missing.join("、")}`}`
-            : "没导入"],
-          ["找过的 App 目录", (upstream.userDataCandidates?.() ?? []).map(tidyPath).join("、") || "这台机器没有可用的候选路径"],
-          // 跨平台排障必须看得见「最终命中了哪个目录」，否则只能从 reasons 串里捞
-          ["命中的 App 目录", tidyPath(runtime.channel?.dir ?? upstream.userDataDir() ?? "") || "没找到"],
-        ];
+        runtime.checks = buildChecks();
       })().catch(error => ctx.logger.warn(`dsh-connect-dumate: 启动自检失败 ${String(error?.message ?? error)}`));
       // 定时器按最小档跑，真正的节流在 pollTick 里按当前旋钮判断：
       // 这样在设置页把间隔从 5 分钟改成 60 分钟，不用重建定时器也不会立刻多打一次。
@@ -517,6 +495,39 @@ export function apply(ctx, config = {}) {
   }
 
   /* ---------------------------------------------------------------- 把手 */
+
+  /**
+   * 诊断表。**每次读取现算**，不在启动自检时算一次就冻住 ——
+   * 之前「选择器内启用数」这类由勾选决定的行会停在旧值：
+   * 实测点完「推荐」启用数已是 11，诊断表还显示 5，排障时这种陈旧数字比没有更坏。
+   */
+  function buildChecks() {
+    const ch = runtime.channel;
+    const login = loginInfo();
+    const enabledCount = modelViews().filter(m => m.enabled).length;
+    return [
+      ["选定模式", `${knobs().mode}（运行期可改；出厂默认来自 patch）`],
+      ["实际通道", ch?.channel?.kind === "gateway" ? "云端网关（搭子 App 可以不开）" : ch?.channel?.kind === "local" ? "搭子本地代理" : "无"],
+      ["网关地址", ch?.channel?.baseURL ?? "未取到"],
+      ["积分上游", "https://console.bce.baidu.com/api/dumate/…"],
+      ["网关 token", ch?.gatewayTokenInfo?.present ? `有效，剩 ${ch.gatewayTokenInfo.minutesLeft} 分钟` : `无（${ch?.gatewayTokenInfo?.error ?? "未取"}）`],
+      ["登录账号", runtime.credit?.account ?? ch?.profiles?.find(p => p.active)?.displayName ?? "未登录"],
+      ["Cookie 条数", String(ch?.cookieCount ?? 0)],
+      ["目录模型总数", String(ch?.models?.length ?? 0)],
+      ["目录来源", ch?.models?.length ? "本次现读" : (toggles.lastCatalog?.length ? `上次缓存（${new Date(toggles.catalogAt || 0).toLocaleString("zh-CN")}）` : "无")],
+      ["选择器内启用数", String(enabledCount)],
+      ["积分刷新间隔", `${Math.round(knobs().pollIntervalMs / 1000)} 秒`],
+      ["最近上游错误", runtime.lastUpstreamError ?? "无"],
+      ["浏览器胶囊判定", runtime.pillView ? `${runtime.pillView.raw}（${new Date(runtime.pillView.at).toLocaleTimeString("zh-CN")}）` : "浏览器还没回报过（页面没开或没加载到本插件的客户端）"],
+      ["登录方式", `${knobs().authSource}（本次实际用的：${ch?.authSource ?? "还没自检"}）`],
+      ["手动 Cookie", login.manual.present
+        ? `已导入 ${login.manual.count} 条（${login.manual.names.join(", ") || "无名"}），${new Date(login.manual.addedAt).toLocaleString("zh-CN")}；够用=${login.manual.sufficient ? "是" : `缺 ${login.manual.missing.join("、")}`}`
+        : "没导入"],
+      ["找过的 App 目录", (upstream.userDataCandidates?.() ?? []).map(tidyPath).join("、") || "这台机器没有可用的候选路径"],
+      // 跨平台排障必须看得见「最终命中了哪个目录」，否则只能从 reasons 串里捞
+      ["命中的 App 目录", tidyPath(ch?.dir ?? upstream.userDataDir() ?? "") || "没找到"],
+    ];
+  }
 
   /**
    * 把家目录缩成 ~。
@@ -589,7 +600,7 @@ export function apply(ctx, config = {}) {
       lastAutoCheckInDate: toggles.lastAutoCheckInDate ?? null,
       accounts: runtime.accounts,
       login: loginInfo(),
-      checks: runtime.checks,
+      checks: buildChecks(),
       stateFile: tidyPath(stateFile()),
     };
   }
