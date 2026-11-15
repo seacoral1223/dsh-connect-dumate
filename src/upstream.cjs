@@ -509,25 +509,70 @@ class CloudClient {
 }
 
 /** 积分包 → 读数。上游把数字写成字符串小数，这里统一转数。 */
+/**
+ * 宽容取数：上游偶尔会把数字以字符串返回，甚至带千分位。
+ * 原先是 Number(x) || 0 —— `"1,000"` 会变成 NaN 再变 0，于是余额直接归零且不报错。
+ */
+function toNum(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") {
+    const cleaned = v.replace(/[,，\s]/g, "");
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+/**
+ * 「可用」的判定。上游实测用 `active`，但这是逆向来的私有接口，
+ * 大小写、数字枚举、换词都可能变。一律归一化后再认。
+ * 返回 "active" | "expired" | "other" | "unknown"。
+ */
+const ACTIVE_WORDS = new Set(["active", "usable", "valid", "available", "inuse", "in_use", "normal", "1", "true"]);
+const DONE_WORDS = new Set(["expired", "usedup", "used_up", "exhausted", "invalid", "disabled", "finished", "0", "2", "false"]);
+function statusClass(s) {
+  if (s === null || s === undefined || s === "") return "unknown";
+  const w = String(s).trim().toLowerCase().replace(/[\s-]/g, "");
+  if (ACTIVE_WORDS.has(w)) return "active";
+  if (DONE_WORDS.has(w)) return "expired";
+  return "other";
+}
+
 function summarizePackages(pkgs) {
+  const now = Date.now();
   const list = (Array.isArray(pkgs?.packages) ? pkgs.packages : []).map(p => {
-    const total = Number(p.totalPoints) || 0, used = Number(p.usedPoints) || 0;
+    const total = toNum(p.totalPoints), used = toNum(p.usedPoints);
+    const expire = toNum(p.expireDate);
+    const cls = statusClass(p.status);
+    // 过期判定独立于 status：上游可能把过期包仍标成 active（回收有延迟），
+    // 那样按 status 累加会把**已经作废的积分算进余额**，用户看到的余额虚高。
+    const expiredByDate = expire > 0 && expire * 1000 <= now;
     return {
       packageId: p.packageId, packageType: p.packageType, source: p.source,
       total, used, remain: Math.max(0, total - used),
-      startDate: p.startDate, expireDate: p.expireDate, status: p.status,
+      startDate: p.startDate, expireDate: expire, status: p.status,
+      usable: cls === "active" && !expiredByDate,
+      expiredByDate,
     };
   });
-  const active = list.filter(p => p.status === "active");
+  const active = list.filter(p => p.usable);
+  // 一条静默失效的兜底：有包、但一个都没被认成可用，也没有一个明确是过期/用完 ——
+  // 那多半是上游改了状态字段。必须把这个事实带出去，别让界面只显示 0。
+  const unrecognized = list.filter(p => statusClass(p.status) === "other" || statusClass(p.status) === "unknown");
   return {
     available: active.reduce((a, p) => a + p.remain, 0),
     grantedTotal: active.reduce((a, p) => a + p.total, 0),
     usedTotal: active.reduce((a, p) => a + p.used, 0),
     packages: active,
+    totalCount: list.length,
+    // 过期但上游仍标可用的那部分，单独报出来，界面/诊断能说清「为什么比上游列表少」
+    expiredHeld: list.filter(p => p.expiredByDate && statusClass(p.status) === "active")
+      .reduce((a, p) => a + p.remain, 0),
+    unrecognizedStatus: unrecognized.length ? [...new Set(unrecognized.map(p => String(p.status)))].slice(0, 4) : [],
     expiringSoon: active
-      .filter(p => p.expireDate && p.expireDate > 0 && p.expireDate * 1000 - Date.now() < 3 * 86400_000)
-      .map(p => ({ ...p, daysLeft: Math.max(0, Math.ceil((p.expireDate * 1000 - Date.now()) / 86400_000)) })),
-    raw: { totalCount: Number(pkgs?.totalCount) || 0 },
+      .filter(p => p.expireDate > 0 && p.expireDate * 1000 - now < 3 * 86400_000)
+      .map(p => ({ ...p, daysLeft: Math.max(0, Math.ceil((p.expireDate * 1000 - now) / 86400_000)) })),
+    raw: { totalCount: toNum(pkgs?.totalCount) },
   };
 }
 

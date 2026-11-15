@@ -276,6 +276,11 @@ export function apply(ctx, config = {}) {
         usedTotal: sum.usedTotal,
         packages: sum.packages,
         expiringSoon: sum.expiringSoon,
+        // 上游改了状态字段 / 过期包仍标可用 —— 这两件事必须能被看见，
+        // 否则「余额 0」到底是真没钱还是我们没读懂，谁也分不出来。
+        totalCount: sum.totalCount ?? (sum.packages?.length ?? 0),
+        unrecognizedStatus: sum.unrecognizedStatus ?? [],
+        expiredHeld: sum.expiredHeld ?? 0,
         consumed24h: Number(usage24h?.consumedPoints ?? 0),
         consumed7d: Number(usage7d?.consumedPoints ?? 0),
         recentUsage: (usage7d?.list ?? []).slice(0, 12).map(r => ({
@@ -1127,5 +1132,8 @@ function renderCredit(c, ch) {
   for (const p of c.packages ?? []) lines.push(`· ${p.packageType}/${p.source}：余 ${fmtNum(p.remain)} / ${fmtNum(p.total)}，到期 ${fmtDate(p.expireDate)}`);
   if (c.bonus) lines.push(`签到：今日${c.bonus.todaySigned ? "已签" : "未签"}，累计 ${c.bonus.totalTimes} 次 / ${c.bonus.totalPoints} 分`);
   if (c.expiringSoon?.length) lines.push(`三天内过期：${c.expiringSoon.map(p => `${fmtNum(p.remain)}（${p.daysLeft} 天）`).join("、")}`);
+  // 这两条是「余额为什么和上游不一样」的唯一线索，不写出来就只能靠人猜
+  if (c.unrecognizedStatus?.length) lines.push(`⚠ 上游有 ${c.totalCount} 个积分包，其中状态字段认不出来的：${c.unrecognizedStatus.join("、")} —— 这些包没算进余额`);
+  if (c.expiredHeld > 0) lines.push(`注：有 ${fmtNum(c.expiredHeld)} 分所在的包上游仍标可用、但按到期时间已过期，未计入余额`);
   return lines.join("\n") + "\n";
 }

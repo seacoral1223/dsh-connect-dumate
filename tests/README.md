@@ -1,6 +1,6 @@
 # 回归测试
 
-**十三个**，都不需要 DSH 进程：假 ctx 按 cordis 语义跑 effect、假 SSE 服务、假 HTTP 状态码、假 React（能翻状态、递归渲染子组件、把控件全点一遍）。`coldstart` 与 `lifecycle` 会真连一次网关读目录，离线时退到兜底并通过。
+**十四个**，都不需要 DSH 进程：假 ctx 按 cordis 语义跑 effect、假 SSE 服务、假 HTTP 状态码、假 React（能翻状态、递归渲染子组件、把控件全点一遍）。`coldstart` 与 `lifecycle` 会真连一次网关读目录，离线时退到兜底并通过。
 
 一条命令跑全部：**`npm test`**。`npm run check` = 语法检查 + 全部；`npm run publish:check` 再叠加元数据 / GitHub 仓库存在性 / 版本重复 / 隐私 / 发布完整性。`prepublishOnly` 挂的是 `npm run check` —— **回归不过就发不出去**，这是刻意的。
 
