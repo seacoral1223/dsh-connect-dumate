@@ -136,6 +136,10 @@ window.__ModuleLoader__.load({
         "poll.m10": "10 分钟",
         "poll.m30": "30 分钟",
         "poll.h1": "60 分钟",
+        "login.inUseIs": "实际在用：",
+        "login.inUseApp": "桌面版登录态",
+        "login.inUseManual": "手动导入的 Cookie",
+        "login.configuredAs": "配置选的是",
         "panel.daysLeft": "天",
         "panel.tooltipReady": "百度搭子积分",
         "panel.tooltipPrefix": "百度搭子",
@@ -256,6 +260,10 @@ window.__ModuleLoader__.load({
         "poll.m10": "10 min",
         "poll.m30": "30 min",
         "poll.h1": "60 min",
+        "login.inUseIs": "Actually in use: ",
+        "login.inUseApp": "desktop app session",
+        "login.inUseManual": "manually imported cookies",
+        "login.configuredAs": "configured as",
         "panel.daysLeft": "d",
         "panel.tooltipReady": "DuMate credits",
         "panel.tooltipPrefix": "Baidu DuMate",
@@ -418,7 +426,7 @@ window.__ModuleLoader__.load({
         setBusy(true);
         const r = await run({ action: "login", kind: "import", text: paste });
         setBusy(false);
-        if (r.ok) { setNotice({ ok: true, text: `${t("login.okPrefix")}${r.count}${t("login.okSuffix")}` }); setPaste(""); }
+        if (r.ok) { setNotice({ ok: true, text: `${t("login.okPrefix")}${r.count}${t("login.okSuffix")} ${r.note || ""}` }); setPaste(""); }
         else setNotice({ ok: false, text: r.error || t("common.error") });
       }
 
@@ -438,7 +446,12 @@ window.__ModuleLoader__.load({
             `${t("login.detected")}：${login?.app?.available ? t("login.appYes") : t("login.appNo")}`,
             login?.manual?.present
               ? ` · ${t("login.manualHas")} ${login.manual.count} ${t("login.manualUnits")}${login.manual.sufficient ? "" : `（${t("login.missing")} ${login.manual.missing.join("、")}）`}`
-              : ` · ${t("login.manualNone")}`),
+              : ` · ${t("login.manualNone")}`,
+            // 配置值与实际生效值不一致时，一定要说出来 —— 否则用户以为换了账号
+            login?.inUse && login.inUse !== login.authSource
+              ? h("div", { style: { ...style.small, color: "var(--dsh-alias-warning, #b8860b)", marginTop: 4 } },
+                  `${t("login.inUseIs")} ${login.inUse === "app" ? t("login.inUseApp") : login.inUse === "manual" ? t("login.inUseManual") : t("cap.none")}（${t("login.configuredAs")} ${login.authSource}）`)
+              : null),
           h("details", { style: { margin: "8px 0 0" } },
             h("summary", { style: { cursor: "pointer", fontSize: 12 } }, t("login.howto")),
             h("ol", { style: { margin: "6px 0 0", paddingLeft: 18, fontSize: 11.5, lineHeight: 1.7, opacity: .82 } },

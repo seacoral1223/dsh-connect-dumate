@@ -754,12 +754,22 @@ export function apply(ctx, config = {}) {
     catch { return null; }
   }
 
+  /**
+   * 本次实际用的是哪份凭据。取的是最近一次自检里上游认下的那条路，
+   * 不是配置里写了什么 —— 配置说 auto、桌面版又可用时，真正在用的就是 app。
+   */
+  function authSourceUsedNow() {
+    return runtime.channel?.authSource ?? null;
+  }
+
   /** 登录方式与手动 Cookie 的对外形状：只有名字、时间、够不够，绝不带值。 */
   function loginInfo() {
     const cookies = manualCookies();
     const check = cookies ? upstream.checkCookies(cookies) : null;
     return {
       authSource: knobs().authSource,
+      // 配置值与**实际生效值**分开报：两者不一致时界面要能看出来，否则用户会被 auto 骗
+      inUse: authSourceUsedNow(),
       manual: {
         present: !!cookies,
         readable: cookies !== null || !toggles.manualCookiesCipher,
@@ -807,7 +817,14 @@ export function apply(ctx, config = {}) {
     }
     runtime.channelAt = 0; runtime.creditAt = 0;
     await refreshNow();
-    return { ok: true, verified: true, format: parsed.format, count: parsed.cookies.length, names: toggles.manualCookieNames };
+    // 说清楚这份 Cookie 现在**到底有没有被用上**。auto + 桌面版可用时它只是备胎，
+    // 而导入 Cookie 的人多半正是想换一个账号 —— 不写这句，他会以为已经换上了。
+    const src = knobs().authSource;
+    const inUse = authSourceUsedNow();
+    const note = inUse === "manual"
+      ? "当前正在使用手动导入的 Cookie。"
+      : `已存下，但本次实际用的是「${inUse === "app" ? "桌面版登录态" : "无"}」——登录方式选的是 ${src}。想强制用手动 Cookie，把登录方式改成「只用手动导入 Cookie」。`;
+    return { ok: true, verified: true, inUse, note, format: parsed.format, count: parsed.cookies.length, names: toggles.manualCookieNames };
   }
 
   function clearManualCookies() {
@@ -1000,8 +1017,10 @@ export function apply(ctx, config = {}) {
           if (body.action === "login") {
             if (body.kind === "import") {
               const r = await importManualCookies(body.text);
+              // 回执字段一律透传，别在这里重新拼一份 —— 上一版就是这么把 note/inUse 拼丢的，
+              // 于是「存了但没用上」这件事用户在界面上永远看不到。
               return write(200, r.ok
-                ? { ok: true, verified: r.verified, count: r.count, names: r.names, state: await snapshot() }
+                ? { ok: true, verified: r.verified, inUse: r.inUse, note: r.note, format: r.format, count: r.count, names: r.names, state: await snapshot() }
                 : { ok: false, error: r.error, parsed: r.parsed });
             }
             if (body.kind === "clear") {

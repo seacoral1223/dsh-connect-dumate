@@ -117,6 +117,22 @@ assert.equal(good.names.length, good.count, "回执给名字与条数，不给�
 assert.ok(good.names.every(n => !secretValues.includes(n)), "names 里只能是名字");
 console.log(`  ok   导入成功且已验证（${good.count} 条：${good.names.join(",")}）`);
 
+// 回执必须说清「这份 Cookie 现在到底有没有被用上」。
+// auto + 桌面版可用时它只是备胎，而导入 Cookie 的人多半正是想换账号 ——
+// 不写这句，他会以为已经换上了，然后继续用桌面版那个号说话。
+assert.ok(typeof good.note === "string" && good.note.length > 10, "导入回执必须有一句说明实际生效情况");
+assert.ok(typeof good.inUse === "string", "回执必须带 inUse（实际用的凭据来源）");
+if (good.inUse !== "manual") {
+  assert.ok(/只用手动导入/.test(good.note), `没生效时要把切换动作说清楚：${good.note}`);
+  console.log(`  ok   未生效时回执给出切换指引（inUse=${good.inUse}）`);
+} else {
+  console.log(`  ok   已生效（inUse=manual）`);
+}
+// state 里配置值与实际值要能同时看到，界面才有机会提示不一致
+const sChk = await state();
+assert.ok("authSource" in sChk.login && "inUse" in sChk.login,
+  "login 必须同时给「配置选的」和「实际在用的」，否则界面无法提示两者不一致");
+
 const s1 = await state();
 assert.equal(s1.login.manual.present, true);
 assert.equal(s1.login.manual.sufficient, true);
