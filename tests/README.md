@@ -23,6 +23,7 @@
 | `manual-login.test.mjs` | 方式二端到端：三种粘法 → 校验必需项 → **真换到网关 token** 才存 → 加密存储 → 切换登录方式 → 清除。逐值比对状态文件 / 返回值 / 日志都没有明文；并验回执必须说明**实际在用哪份凭据**（auto + 桌面版可用时手动 Cookie 只是备胎，不写这句用户会以为换了账号） |
 | `machine-variants.test.mjs` | **非默认机器形态**四种：多账号档（选非 active 档必须解得开）、没装 App 只手动 Cookie（不许抛 Node 英文）、内层目录名不在候选里（扫描要真的下探 uid 一层）、密钥被截断（读取三次字节必须一动不动，且状态能区分 key-missing / none） |
 | `http-robustness.test.mjs` | 同源接口乱传 15 组参数：不崩、返回都是 JSON、不回显本机标识、不写坏状态文件；**目录外的 key 一律拒绝并说明原因**（否则垃圾只随状态文件堆积）；显示名截 80 字并剥控制字符；日志无凭据 |
+| `structure.test.mjs` | **结构守卫**：`package.json` 的 test 链必须与 `tests/` 目录一一对应；文档与脚本里**不许写死回归数量**（曾经有 5 个不同答案）；每个用例不许有 `process.exit` 之后的死代码 |
 | `portable.test.mjs` | ① 跨平台目录候选（Windows 双 APPDATA、macOS `Library/Application Support`、Linux `~/.config` 与 `XDG_CONFIG_HOME`、`DUMATE_USER_DATA` 严格生效不回退）；② **隐私**：违禁值全部运行时推导、扫描范围 = tarball 范围、**不跳过任何文件包括它自己**、ASCII 标识整词匹配（真家目录仍能抓到，合法 handle 不误报）、命中只报位置不打印原文；③ 发布完整性：无 `private:true`、`files` 覆盖运行必需文件、`.cjs` 后缀保住、不静态 import DSH 包、客户端全走同源相对路径、宿主与客户端字段名一致 |
 
 ## 不覆盖的

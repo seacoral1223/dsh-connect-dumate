@@ -9,7 +9,7 @@
 // DSH 升级后如果改名，这个测试会告诉我们哪些码失效了。
 import http from "node:http";
 import assert from "node:assert/strict";
-import { DuMateAdapter } from "../lib/adapter.js";
+import { DuMateAdapter, readableFailure } from "../lib/adapter.js";
 
 const OFFICIAL_CODES = new Set([
   "ABORTED", "ACCOUNT_QUOTA", "ACCOUNT_SIGN_IN_REQUIRED", "ACCOUNT_TOKEN_INVALID", "AUTH",
@@ -110,6 +110,37 @@ const rules = {
 };
 for (const [label, ok] of Object.entries(rules)) { if (!ok) bad++; console.log(`${ok ? "  ok  " : "  FAIL"} 策略：${label}`); }
 s0.close();
+
+// 文案不许污染分类关键词，也不许做绝对承诺。
+// 宿主重试按 code 判（dsh-llm-retry 的 retryPolicy），但 pi-ai 那一层还会按
+// **错误文本正则**再分一次类 —— WorkBuddy 的已知限制里就记着 model_busy 被
+// 译成 quota_exceeded 的事故。这里不假装复刻宿主的正则（读不全），
+// 只钉一条与实现无关的性质：限流那句里不许出现积分类词，反之亦然。
+{
+  const texts = {
+    RATE_LIMIT: readableFailure(429, "RATE_LIMIT", ""),
+    QUOTA: readableFailure(402, "QUOTA", ""),
+    AUTH: readableFailure(401, "AUTH", ""),
+    SERVER: readableFailure(503, "SERVER", ""),
+  };
+  const FORBIDDEN = {
+    RATE_LIMIT: ["积分不足", "额度用尽", "配额到顶"],
+    QUOTA: ["限流", "太密"],
+    AUTH: ["限流", "积分不足"],
+    SERVER: ["积分不足", "重新登录"],
+  };
+  for (const [code, list] of Object.entries(FORBIDDEN)) {
+    for (const w of list) {
+      if (texts[code].includes(w)) { bad++; console.log(`  FAIL ${code} 文案含「${w}」，会被按文本分类那层抢判：${texts[code]}`); }
+    }
+  }
+  for (const [code, t] of Object.entries(texts)) {
+    if (/会自动重试/.test(t)) { bad++; console.log(`  FAIL ${code} 承诺了"会自动重试"，但重试取决于宿主装没装重试插件：${t}`); }
+  }
+  // AUTH 必须同时给两条出路：只说"重新登录"对应不上方式二（手动 Cookie）的用户
+  if (!/Cookie/.test(texts.AUTH)) { bad++; console.log(`  FAIL AUTH 文案没覆盖手动导入那条路：${texts.AUTH}`); }
+  if (!bad) console.log("  ok   四条文案互不污染分类关键词、不承诺绝对自动重试、AUTH 覆盖两种登录方式");
+}
 
 console.log(bad ? `\nFAIL：${bad} 条不对` : "\nPASS：失败码全部落在 dsh-llm 官方表内，429 会退避重试，AUTH/QUOTA/半截流不重试");
 // 先让 undici 的连接池散掉再退出，否则 libuv 会在 process.exit 时甩一句断言

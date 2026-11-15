@@ -192,14 +192,34 @@ function parseCookieInput(text) {
       if (text.startsWith("#HttpOnly_")) { httpOnly = true; text = text.slice("#HttpOnly_".length); }
       else if (text.startsWith("#")) continue;
       const f = text.split("\t");
-      if (f.length < 7) continue;
-      cookies.push({ name: f[5], value: f[6], domain: f[0], path: f[2] || "/", secure: /^(TRUE|1)$/i.test(f[3]), httpOnly, expirationDate: Number(f[4]) || 0 });
+      // 两种合法列数，别混为一谈（列序不同，取错列会把过期时间当名字）：
+      //   六列（标准 netscape / 多数浏览器插件）：domain flag path expiry name value
+      //   七列（多了 secure 一列）：            domain flag path secure expiry name value
+      // 原先只接受 ≥7 列，把六列导出文件整份判成「没有可用行」。
+      if (f.length < 6) continue;
+      const six = f.length === 6;
+      cookies.push({
+        name: six ? f[4] : f[5],
+        value: six ? f[5] : f[6],
+        domain: f[0],
+        path: f[2] || "/",
+        secure: six ? /^(TRUE|1)$/i.test(f[4]) : /^(TRUE|1)$/i.test(f[3]),
+        httpOnly,
+        // 六列里 expiry 在索引 3，七列里在索引 4
+        expirationDate: Number(six ? f[3] : f[4]) || 0,
+      });
     }
-    return cookies.length ? { cookies, format: "netscape", error: null } : { cookies: [], format: "netscape", error: "cookies.txt 里没有可用行" };
+    return cookies.length ? { cookies, format: "netscape", error: null } : { cookies: [], format: "netscape", error: "cookies.txt 里没有可用行（每行至少六列，制表符分隔）" };
   }
   // ① Cookie 头原文：`k=v; k2=v2`，允许带引号值与换行分隔
+  // 从浏览器 Network 面板复制出来的一定带 `Cookie:` 前缀 —— 不剥掉的话，
+  // 第一个键名变成 `Cookie: bce-sessionid`，通不过名字校验被**静默丢掉**，
+  // 而 bce-sessionid 恰好是最关键那一个，报错只说「缺 bce-sessionid」，谁也想不到是前缀的事。
+  let body = s;
+  const badNames = [];
+  body = body.replace(/^\s*(set-)?cookie\s*:/i, "");
   const cookies = [];
-  for (const part of s.split(/[;\n]+/)) {
+  for (const part of body.split(/[;\n]+/)) {
     const t = part.trim();
     if (!t || !t.includes("=")) continue;
     const i = t.indexOf("=");
@@ -208,12 +228,19 @@ function parseCookieInput(text) {
     // （形如 "2026-11-14T16:21:08Z|fd…"），把它当包裹符剥掉会让值短两个字符，
     // 上游直接判定登录态无效 —— 实测踩过，报错还是那句含糊的「要求重新登录」。
     const value = t.slice(i + 1).trim();
-    if (!name || !/^[\w!#$%&'*+.^~`-]+$/.test(name)) continue;
+    if (!name || !/^[\w!#$%&'*+.^~`-]+$/.test(name)) {
+      // 名字里带空格/冒号多半是粘贴时混进了请求行或表头，说清而不是默默丢
+      if (/\s|:/.test(name)) badNames.push(name.slice(0, 28));
+      continue;
+    }
     cookies.push({ name, value, domain: ".bce.baidu.com", path: "/", secure: false, httpOnly: false, expirationDate: 0 });
   }
-  return cookies.length
-    ? { cookies, format: "header", error: null }
-    : { cookies: [], format: "header", error: "没认出格式：支持 `k=v; k2=v2`、JSON 数组、或 cookies.txt" };
+  if (!cookies.length) {
+    return { cookies: [], format: "header", error: badNames.length
+      ? `这些行不像 Cookie 键值对（可能粘进了请求头名或表头）：${badNames.slice(0, 3).join("、")}。只要 Value 那一列，形如 bce-sessionid=…; bce-user-info=…`
+      : "没认出格式：支持 `k=v; k2=v2`（可带 `Cookie:` 前缀）、JSON 数组、或 cookies.txt" };
+  }
+  return { cookies, format: "header", error: null };
 }
 
 /** 手动导入的 cookie 够不够用：缺哪个、有没有 csrf（bce-user-info 同时当 csrftoken 用）。 */

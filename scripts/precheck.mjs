@@ -68,9 +68,9 @@ try {
 // ⑤ 回归与隐私（prepublishOnly 也会跑，这里提前跑一遍好定位）
 try {
   runNpm(["test", "--silent"], { stdio: "pipe" });
-  ok("12 个回归全过", true);
+  ok("全部回归通过", true);
 } catch (e) {
-  ok("12 个回归全过", false, String(e.stdout ?? e.message).split(/\r?\n/).filter(l => /FAIL/.test(l)).slice(0, 3).join(" / "));
+  ok("回归未全过", false, String(e.stdout ?? e.message).split(/\r?\n/).filter(l => /FAIL/.test(l)).slice(0, 3).join(" / "));
 }
 
 // ⑥ 包里不许有内部笔记与本机凭据

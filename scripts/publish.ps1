@@ -135,7 +135,7 @@ Write-Host ('  ok  已推送到 ' + $repoWeb)
 
 # ---------- 6) 发布前自检 ----------
 Write-Host ''
-Write-Host '  ..  发布前自检（12 个回归 + 隐私扫描 + 元数据）'
+Write-Host '  ..  发布前自检（全部回归 + 隐私扫描 + 元数据）'
 & 'C:\Program Files\nodejs\npm.cmd' run publish:check
 if ($LASTEXITCODE -ne 0) {
   Write-Host ''

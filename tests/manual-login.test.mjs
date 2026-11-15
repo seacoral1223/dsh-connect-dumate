@@ -110,6 +110,40 @@ assert.equal(half.ok, false);
 assert.match(half.error, /bce-sessionid/, "缺哪一项必须点名说");
 console.log("  ok   垃圾与缺项都被拒，且说清缺哪个");
 
+// 粘贴形态的边界（2026-11-16 修）：
+// ① 从 Network 面板复制一定带 `Cookie:` 前缀 —— 不剥掉的话第一个键名变成
+//    `Cookie: bce-sessionid`，通不过名字校验被**静默丢掉**，而它恰好是最关键那一个，
+//    报错只会说「缺 bce-sessionid」，没人想到是前缀的事。
+// ② 浏览器插件导出的 cookies.txt 有六列形状（没有 expiry 列），原先要求 ≥7 列，
+//    整份文件被判「没有可用行」。
+{
+  const withPrefix = upstream.parseCookieInput(`Cookie: ${pasted.replace(/^Cookie:\s*/i, "")}`);
+  assert.equal(withPrefix.cookies.length, 3, `带 Cookie: 前缀应当照样解析出 3 条，实际 ${withPrefix.cookies.length}`);
+  assert.ok(withPrefix.cookies.some(c => c.name === "bce-sessionid"), "前缀没剥掉，bce-sessionid 被丢了");
+  const checkP = upstream.checkCookies(withPrefix.cookies);
+  assert.equal(checkP.ok, true, `带前缀的粘贴校验不过：${checkP?.missing?.join(",")}`);
+  console.log("  ok   带 `Cookie:` 前缀的粘贴：前缀剥掉，两条必需项都在");
+
+  // 标准六列 netscape：domain flag path expiry name value
+  const exp = Math.floor(Date.now() / 1000) + 86400;
+  const sixCol = [
+    `.bce.baidu.com\tTRUE\t/\t${exp}\tbce-sessionid\t001dSESSION`,
+    `.bce.baidu.com\tTRUE\t/\t${exp}\tbce-user-info\t"2026-11-16T00:00:00Z|abc"`,
+  ].join("\n");
+  const r6 = upstream.parseCookieInput(sixCol);
+  assert.equal(r6.format, "netscape", "六列文件应当被认出是 cookies.txt");
+  assert.equal(r6.cookies.length, 2, `六列被整份丢掉了：${r6.error}`);
+  assert.equal(r6.cookies[0].name, "bce-sessionid", `六列的列序取错了，name=${r6.cookies[0].name}`);
+  assert.equal(r6.cookies[0].value, "001dSESSION");
+  assert.equal(r6.cookies[0].expirationDate, exp, "六列的 expiry 在第 4 列（索引 3），不是没有");
+  assert.equal(r6.cookies[1].value, '"2026-11-16T00:00:00Z|abc"', "值里的成对引号必须原样保留");
+  console.log("  ok   六列 cookies.txt 按标准列序解析（expiry 在索引 3）");
+
+  // 名字里带空格/冒号的行要说清，不许静默丢
+  const junk = upstream.parseCookieInput("Cookie 头: bce-user-info=x");
+  assert.ok(!junk.error || /不像 Cookie|前缀|表头/.test(junk.error), `含糊报错：${junk.error}`);
+}
+
 const good = await action({ action: "login", kind: "import", text: pasted });
 assert.equal(good.ok, true, `导入失败：${good.error}`);
 assert.equal(good.verified, true, "导入必须真的验过才存");

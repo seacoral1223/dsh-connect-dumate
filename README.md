@@ -4,6 +4,17 @@
 
 **默认走云端模型网关 —— 搭子 App 不用开着。** 这是它和 `dsh-connect-workbuddy` 最大的结构差异：WorkBuddy 插件要用 App 的登录 token 直连云端，这里也是；而 App 自己那套本地代理只是备胎通道。
 
+## 风险提示（请先读这段）
+
+**这是一个第三方非官方接入。** 它调用的是百度搭子桌面客户端自己使用的私有接口（不是开放 API），上游随时可能收紧，插件可能某一天就失效。请自行评估账号风险后再决定是否安装使用。
+
+需要说清楚的四件事：
+
+- 插件**不提供账号、不共享凭据、不绕过计费**。它读的就是这台机器上你已经登录的那份登录态；每一次调用消耗的都是**你自己账号**的积分，按上游真实扣费。
+- 插件**没有任何提权、刷额度、批量注册的能力**。全部写操作只有一个：每日签到（`POST points/loginBonus`），而且**必须你点按钮、或显式打开自动签到，才会执行** —— 默认关闭。
+- 它**不修改搭子 App 的任何文件**，只读它的登录态；运行期只写 `~/.dsh/` 下自己的两个文件。
+- **使用官方桌面版客户端始终是最安全的选择。** 这个插件解决的是一件很小的事：省掉在 DSH 与搭子窗口之间来回切换。
+
 ## 两种登录方式
 
 插件不注册账号、不代你登录 —— 它复用这台机器上**已有**的百度登录态。有两条路：
@@ -44,9 +55,9 @@
 
 ```powershell
 # 1) 下载并解压
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.11
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.12
 tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
-# 解压出来是目录 dsh-connect-dumate-0.9.11
+# 解压出来是目录 dsh-connect-dumate-0.9.12
 ```
 
 2) 打开 DSH 的插件管理（**Plugins → Add plugin**），选那个解压出来的目录。
@@ -55,12 +66,12 @@ tar -xzf dumate.tgz          # Windows 10+ 自带 tar；其它解压工具也行
 **B. git clone**
 
 ```bash
-git clone --branch v0.9.11 https://github.com/seacoral1223/dsh-connect-dumate.git
+git clone --branch v0.9.12 https://github.com/seacoral1223/dsh-connect-dumate.git
 ```
 
 然后同样在 **Plugins → Add plugin** 里选这个目录，重启。
 
-> 装完可以自己在目录里跑 `npm test`（**17 个回归**）验证包是完整的。其中 `coldstart` / `lifecycle` / `manual-login` / `disabled` 会真连一次搭子上游（读目录、换 token、对照组发请求），其余全部离线；所有用例会先把 `DSH_HOME` 隔离到临时目录，**不会改你的账号数据与勾选**。
+> 装完可以自己在目录里跑 `npm test`（回归清单见 `tests/README.md`，数量由 `tests/structure.test.mjs` 与目录自动核对，不写死）验证包是完整的。其中 `coldstart` / `lifecycle` / `manual-login` / `disabled` 会真连一次搭子上游（读目录、换 token、对照组发请求），其余全部离线；所有用例会先把 `DSH_HOME` 隔离到临时目录，**不会改你的账号数据与勾选**。
 
 装好之后你应该看到：
 
@@ -358,3 +369,23 @@ ctx.effect(function* () {
 已实测：云端网关目录 43 个 + `glm-5` 非流式 200 + 流式 SSE + `include_usage` 生效；`mode=gateway/auto/local` 三条自检都 `ok=true`；积分余额、四个积分包、7 天消耗、今日签到状态都读通（这些是账号专属数字，不写进公开文档）；勾选开关与 `action=bogus` 的报错路径；适配器离线 SSE 桩（消息映射 / StreamChunk 顺序 / usage 折算）；生命周期 harness 与冷启动 harness（第一帧就交出 22 个模型）。
 
 需要在 GUI 里确认：**重启 DSH 后**模型选择器出现「百度搭子 DuMate」分组并可选中、输入框胶囊渲染、真跑一轮对话。**把搭子 App 完全退出后再跑一次**才算证明「不开就能用」这条。
+
+## 免责声明
+
+1. 本插件是**独立的第三方项目**，与百度、与 DeepSeek Harness 官方均无隶属、背书或赞助关系。「百度搭子 / DuMate」及其相关名称、商标归其权利人所有。
+2. 插件依赖搭子客户端的**非公开接口**，这些接口可能随时变更、限制或关闭，届时插件会失效且不一定能及时跟进。安装即表示你接受这一不确定性。
+3. 使用本插件产生的每一次模型调用都会**真实消耗你自己账号的积分**；每日签到会**真实领取**当日奖励。所有涉及花费或改变账号状态的动作都需要你显式触发或显式开启开关，插件不会自行发起。
+4. 因使用本插件导致的**账号限流、功能受限、积分异常、数据丢失或其他后果，本项目的作者不承担责任**。若你判断账号风险不可接受，请只使用官方桌面版客户端。
+5. 本插件按 **MIT 许可证**发布，按「现状」提供，不含任何明示或暗示的保证。
+6. 登录凭据（Cookie）的处理边界见 [docs/PRIVACY.md](docs/PRIVACY.md)：明文不落盘、不写日志、不回传页面；加密用的密钥与你的账号信息不会随包发布。
+
+## 致谢
+
+- **[dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)** —— 本插件的宿主接口用法（`registerAdapter` / `registerConfigurableProviders` / `registerModelDiscovery` 的注册顺序与 `settingsNs` 约定）是**逐行读它的源码核对**出来的；它的发布文档、隐私文档与测试纪律也是这个项目的参照对象。若干具体设计（写完回读校验、探测失败返回 null 而不是猜、版本围栏的上界写法、文案不得互相污染分类关键词）直接来自它的已知限制与变更记录。
+- **dsh-connect-trae** —— 同源 HTTP 面与设置页分栏的组织方式参考。
+- **DeepSeek Harness** 与其 `@deepseek-ai/dsh-*` 包 —— 提供插件模型、模型目录与适配器契约。
+- **百度搭子（DuMate）** 桌面客户端 —— 本插件复用它在本机的既有登录态，不与其争用任何文件。
+
+## 许可
+
+MIT。见 [LICENSE](LICENSE)。本包**没有第三方运行时依赖**（不 import 任何 DSH 包，也不捆绑原生 SDK），原因见上文「为什么 v0.1 时选择器里根本没有『百度搭子』」。

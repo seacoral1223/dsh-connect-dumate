@@ -255,6 +255,7 @@ export function apply(ctx, config = {}) {
   const providerId = typeof config.providerId === "string" && config.providerId ? config.providerId : PROVIDER_ID;
   const enabled = config.enabled !== false;
   const toggles = loadToggles();
+  let claimInflight = null; // 签到单飞：并发点两次只发一次真实 POST（这是唯一会改账号状态的接口）
 
   /**
    * 运行期旋钮：设置页写的是状态文件，patch 里的同名字段只当出厂默认。
@@ -605,6 +606,23 @@ export function apply(ctx, config = {}) {
   /* ---------------------------------------------------------------- 把手 */
 
   /**
+   * 宿主（DSH）版本号。取法按可靠性依次尝试，**取不到就明说取不到** ——
+   * 诊断里写一个猜的版本号比空着更坏：别人照着排查会排错方向。
+   */
+  function hostVersion() {
+    const tries = [
+      () => ctx.meta?.version,
+      () => ctx.root?.meta?.version,
+      () => ctx.fiber?.app?.meta?.version,
+      () => process.env.DSH_VERSION,
+    ];
+    for (const t of tries) {
+      try { const v = t(); if (typeof v === "string" && v) return v; } catch { /* 换下一个 */ }
+    }
+    return "未能取得";
+  }
+
+  /**
    * 诊断表。**每次读取现算**，不在启动自检时算一次就冻住 ——
    * 之前「选择器内启用数」这类由勾选决定的行会停在旧值：
    * 实测点完「推荐」启用数已是 11，诊断表还显示 5，排障时这种陈旧数字比没有更坏。
@@ -614,6 +632,11 @@ export function apply(ctx, config = {}) {
     const login = loginInfo();
     const enabledCount = modelViews().filter(m => m.enabled).length;
     return [
+      // 版本必须是表的第一行：别人报障时第一个要回答的就是"你装的哪版"。
+      // 原先整张表没有版本，只有归属头里带了版本号（用户看不见），
+      // 于是"我这版对不对"这个问题答不出来 —— WorkBuddy 专门为此写了一节。
+      ["插件版本", bundleVersion()],
+      ["宿主版本", hostVersion()],
       ["选定模式", `${knobs().mode}（运行期可改；出厂默认来自 patch）`],
       ["实际通道", ch?.channel?.kind === "gateway" ? "云端网关（搭子 App 可以不开）" : ch?.channel?.kind === "local" ? "搭子本地代理" : "无"],
       ["网关地址", ch?.channel?.baseURL ?? "未取到"],
@@ -680,6 +703,10 @@ export function apply(ctx, config = {}) {
       // 上一版写 `runtime.credit?.accountId ? "已隐藏" : ""`，而主键就在同一份响应的
       // credit.accountId 里发出去了：那句"已隐藏"是假的，比不写更坏。
       accountIdHidden: "本接口不返回账号主键",
+      // 版本号：诊断页与「复制 JSON」都要能自证是哪版报的障。
+      // 原先只有归属头里带版本（用户看不见），别人问"我这版对不对"就答不出来。
+      version: bundleVersion(),
+      dshVersion: hostVersion(),
       profiles: ch?.profiles ?? [],
       models: modelViews(),
       // 「选择器里到底有几个」用宿主的答复，不拿自己的 enabled 数自证 ——
@@ -709,15 +736,29 @@ export function apply(ctx, config = {}) {
   }
 
   async function claimCheckIn() {
-    const ch = await refreshChannel({ force: true });
-    if (!ch?.cloud) return { ok: false, error: "本机没有可用的百度搭子登录态" };
-    try {
-      const granted = await ch.cloud.claimBonus();
-      await refreshCredit({ force: true });
-      return { ok: true, granted: granted === true, credit: runtime.credit };
-    } catch (error) {
-      return { ok: false, error: tidyText(String(error?.message ?? error)).slice(0, 200) };
+    // 签到是本项目**唯一会改变账号状态**的写接口，而且每天只结一次。
+    // 原先没有任何去重：连点两次按钮、或自动签到与手动点击撞上，就是两次真实 POST。
+    // 上游会挡掉第二次，但那意味着我们在拿用户的账号试错。
+    if (claimInflight) return claimInflight;
+    // 当日短路只在「读数确实是今天采的、且说已签」时生效 ——
+    // 拿昨天的缓存判断"今天已签"会让人永远领不到。
+    if (runtime.credit?.bonus?.todaySigned === true
+      && localDateKey(new Date(runtime.credit.at || 0)) === localDateKey()) {
+      return { ok: true, granted: false, already: true, credit: runtime.credit,
+        note: "今天已经领过了（按上游今天的签到读数判断，没有再发请求）" };
     }
+    claimInflight = (async () => {
+      const ch = await refreshChannel({ force: true });
+      if (!ch?.cloud) return { ok: false, error: "本机没有可用的百度搭子登录态" };
+      try {
+        const granted = await ch.cloud.claimBonus();
+        await refreshCredit({ force: true });
+        return { ok: true, granted: granted === true, credit: runtime.credit };
+      } catch (error) {
+        return { ok: false, error: tidyText(String(error?.message ?? error)).slice(0, 200) };
+      }
+    })().finally(() => { claimInflight = null; });
+    return claimInflight;
   }
 
   /** 勾选 / 图片开关 / 显示名覆盖：点一下即生效并落盘。 */

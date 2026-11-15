@@ -14,7 +14,7 @@
 
 ```powershell
 cd <项目目录>
-npm test                                    # 12 个回归，不过就别发
+npm test                                    # 全部回归，不过就别发
 # 改 package.json 的 version 与 CHANGELOG.md，然后：
 git add -A
 git commit -m "release: vX.Y.Z"
