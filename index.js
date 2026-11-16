@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
-import { DuMateAdapter } from "./lib/adapter.js";
+import { DuMateAdapter, gatewayRateState } from "./lib/adapter.js";
 
 const require = createRequire(import.meta.url);
 const upstream = require("./src/upstream.cjs");
@@ -684,6 +684,17 @@ export function apply(ctx, config = {}) {
       ["选择器内启用数", String(enabledCount)],
       ["积分刷新间隔", `${Math.round(knobs().pollIntervalMs / 1000)} 秒`],
       ["最近上游错误", runtime.lastUpstreamError ?? "无"],
+      // 限流是**账号级、按请求条数**算的（实测约 10 次/分钟），界面看不见它就会觉得"莫名其妙不能用"。
+      // 把这两格摆出来，一眼能看出是快撞了还是刚撞过。
+      ["近 60 秒网关请求", (() => {
+        const g = gatewayRateState();
+        const pct = g.approxCapPerMinute ? Math.round((g.callsLast60s / g.approxCapPerMinute) * 100) : null;
+        return `${g.callsLast60s} 次（实测上限约 ${g.approxCapPerMinute} 次/分钟${pct !== null ? `，已用 ${pct}%` : ""}）`;
+      })()],
+      ["近 60 秒撞限流", (() => {
+        const g = gatewayRateState();
+        return g.hits429Last60s ? `${g.hits429Last60s} 次 —— 等待会按次数递增（15s→30s→60s 封顶）` : "无";
+      })()],
       ["浏览器胶囊判定", runtime.pillView ? `${runtime.pillView.raw}（${new Date(runtime.pillView.at).toLocaleTimeString("zh-CN")}）` : "浏览器还没回报过（页面没开或没加载到本插件的客户端）"],
       ["登录方式", `${knobs().authSource}（本次实际用的：${ch?.authSource ?? "还没自检"}）`],
       ["手动 Cookie", login.manual.present

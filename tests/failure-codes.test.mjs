@@ -9,7 +9,7 @@
 // DSH 升级后如果改名，这个测试会告诉我们哪些码失效了。
 import http from "node:http";
 import assert from "node:assert/strict";
-import { DuMateAdapter, readableFailure, failureFromResponse } from "../lib/adapter.js";
+import { DuMateAdapter, readableFailure, failureFromResponse, resetRateState } from "../lib/adapter.js";
 
 const OFFICIAL_CODES = new Set([
   "ABORTED", "ACCOUNT_QUOTA", "ACCOUNT_SIGN_IN_REQUIRED", "ACCOUNT_TOKEN_INVALID", "AUTH",
@@ -68,6 +68,7 @@ const cases = [
 
 let bad = 0;
 for (const [label, status, headers, want] of cases) {
+  resetRateState();   // 递增等待进入期望值，每条用例都要从"第一次撞"开始算
   const { srv, adapter } = await serverFor(status, headers);
   const fin = await finishOf(adapter);
   const f = fin?.reason?.failure ?? {};
@@ -169,6 +170,7 @@ s0.close();
     ["retry-after: 400（荒谬大数，压到上限）", { "retry-after": "400" }, 15000, 60000],
   ];
   for (const [label, headers, lo, hi] of shapes) {
+    resetRateState();   // 递增等待让"第几次撞"进入期望值，不复位就会随用例顺序漂
     const f = failureFromResponse(res(headers), `{"error":{"code":"user_rate_limit_exceeded"}}`);
     const got = f.providerRetryAfterMs;
     if (!(Number.isFinite(got) && got > 0)) { bad++; console.log(`  FAIL ${label} → ${JSON.stringify(got)} 不是正有限数，宿主会抛错`); continue; }
@@ -176,10 +178,30 @@ s0.close();
     if (f.code !== "RATE_LIMIT") { bad++; console.log(`  FAIL ${label} → code=${f.code}，429 必须仍是可重试的 RATE_LIMIT`); }
   }
   // 非限流的 429 之外，别替上游编造等待：503 没给 retry-after 就不该给这个字段
+  resetRateState();
   const srv = failureFromResponse(res({}, 503), "bad gateway");
   if (srv.providerRetryAfterMs !== undefined) { bad++; console.log(`  FAIL SERVER 不该自带 providerRetryAfterMs：${srv.providerRetryAfterMs}`); }
-  if (bad) console.log(`  （以上为 retry-after 段的失败）`);
-  else console.log("  ok   retry-after 十种形状：429 一律给出 15–60 秒的合法等待，SERVER 不编造");
+
+  // 递增等待：实测窗口约 60 秒，第一次只等 15 秒很可能又排进同一个满窗口。
+  // 这三档必须真的递增，且封顶不超过 60 秒（每次重试都是真实计费的上游调用）。
+  resetRateState();
+  const steps = [];
+  for (let k = 0; k < 5; k++) {
+    steps.push(failureFromResponse(res({}, 429), "rate limited").providerRetryAfterMs);
+  }
+  const want = [15000, 30000, 60000, 60000, 60000];
+  if (steps.join(",") !== want.join(",")) {
+    bad++; console.log(`  FAIL 递增等待不对：${steps.join(" → ")}（期望 ${want.join(" → ")}）`);
+  } else {
+    console.log("  ok   递增等待 15s→30s→60s 封顶，上游给了合理值就尊重它");
+  }
+  // 上游给值时不递增（尊重上游比自己的猜测准）
+  resetRateState();
+  failureFromResponse(res({}, 429), "x");
+  const honored = failureFromResponse(res({ "retry-after": "45" }, 429), "x").providerRetryAfterMs;
+  if (honored !== 45000) { bad++; console.log(`  FAIL 上游给 45 秒时应尊重它，实际 ${honored}`); }
+  if (bad) console.log("  （以上为 retry-after 段的失败）");
+  else console.log("  ok   retry-after 十种形状 + 递增等待 + 尊重上游值");
 }
 
 console.log(bad ? `\nFAIL：${bad} 条不对` : "\nPASS：失败码全部落在 dsh-llm 官方表内，429 会退避重试，AUTH/QUOTA/半截流不重试");
