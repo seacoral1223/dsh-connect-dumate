@@ -18,9 +18,26 @@ import { pathToFileURL } from "node:url";
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), "dumate-rollback-"));
 const FILE = path.join(SANDBOX, "dumate-state.json");
 process.env.DSH_HOME = SANDBOX;
+// 强制走 fixture 而不是现读网关：modelViews 的优先级是「实时目录 > lastCatalog > 兜底表」，
+// 不掐掉第一层的话，装了搭子 App 的机器和没装的机器会走不同分支——那就不叫确定性测试。
+process.env.DUMATE_USER_DATA = path.join(SANDBOX, "no-app-at-all");
 
 // 起点：全开、mode=auto。故意让 disabledModels 为空，好看出它有没有被偷偷改过。
-fs.writeFileSync(FILE, JSON.stringify({ disabledModels: [], routerEnabled: [], imageInput: {}, displayNames: {}, realNames: {}, mode: "auto", lastCatalog: [], catalogAt: 0 }));
+//
+// **lastCatalog 必须自带**：原先这里写空数组，于是模型只能靠真机登录态现读网关目录 ——
+// 测试"绿"是因为开发机装了搭子 App。卸载插件把那份状态文件删掉之后它立刻变红，
+// 说明它一直在依赖机器状态（同一类问题已经犯过第三次）。
+// 现在它离线、确定性、在任何机器上结果一致。
+const CATALOG = [
+  { key: "deepseek-v4-pro", id: "deepseek-v4-pro", contextInput: 128000, context: 128000, output: 8192, imageInput: false },
+  { key: "glm-5", id: "glm-5", contextInput: 128000, context: 128000, output: 4096, imageInput: false },
+  { key: "kimi-k3", id: "kimi-k3", contextInput: 256000, context: 256000, output: 8192, imageInput: true },
+  { key: "qwen38-flash", id: "qwen38-flash", contextInput: 128000, context: 128000, output: 8192, imageInput: false },
+];
+fs.writeFileSync(FILE, JSON.stringify({
+  disabledModels: [], routerEnabled: [], imageInput: {}, displayNames: {}, realNames: {},
+  mode: "auto", lastCatalog: CATALOG, catalogAt: Date.now(),
+}));
 
 const { apply } = await import(pathToFileURL(path.join(import.meta.dirname, "..", "index.js")).href + "?rb=" + Date.now());
 const routes = new Map();
