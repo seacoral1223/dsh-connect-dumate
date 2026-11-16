@@ -21,7 +21,30 @@ assert.deepEqual(inChain, dirTests,
 assert.ok(dirTests.length >= 15, `回归数量异常少（${dirTests.length}），确认目录没被误删`);
 console.log(`  ok   test 链覆盖全部 ${dirTests.length} 个回归，一一对应`);
 
-// --- ② 文档与脚本里不许出现"N 个回归"这种写死的数字
+// --- ② README 的结构：安装必须排在警告前面
+// 2026-11-16 的实际问题：安装说明在第 50 行，前面 49 行是风险提示与原理。
+// 而 DSH 插件详情页与市场卡片读的就是 README 开头 —— 第一眼看不到怎么装，就真不会装。
+{
+  const r = fs.readFileSync(rel("README.md"), "utf8").split(/\r?\n/);
+  const at = re => r.findIndex(l => re.test(l));
+  const install = at(/^## .*(装好|装上|安装)/);
+  const risk = at(/^## 风险提示/);
+  const disclaimer = at(/^## 免责声明/);
+  // 注意用 >= 0：0 是「标题在第一行」这个合法位置，写成 > 0 会把排序问题误报成「章节不存在」
+  assert.ok(install >= 0, "README 没有安装章节");
+  assert.ok(risk < 0 || install < risk, `安装(${install + 1} 行)必须排在风险提示(${risk + 1} 行)前面`);
+  assert.ok(install <= 12, `安装章节出现在第 ${install + 1} 行，太靠后了 —— 第一屏就该看到`);
+  assert.ok(disclaimer < 0 || install < disclaimer, "免责声明不该挡在安装前面（放文末即可）");
+  // 安装步骤里必须有"重启"，这是"装完看不见东西"的头号原因
+  const installBlock = r.slice(install, install + 22).join("\n");
+  assert.ok(/重启 DSH/.test(installBlock), "安装步骤必须写明要重启 DSH");
+  assert.ok(/Add plugin|添加插件/.test(installBlock), "安装步骤必须写明在插件管理里选目录");
+  assert.ok(/npm i -g|npm install -g/.test(r.join("\n")) && /不要用|无效|不会把/.test(r.join("\n")),
+    "必须警告不要用 npm i -g（全局安装不会注册进 profile）");
+  console.log(`  ok   README 结构：安装在第 ${install + 1} 行、风险提示在第 ${risk + 1} 行、含重启与 Add plugin 两步`);
+}
+
+// --- ③ 文档与脚本里不许出现"N 个回归"这种写死的数字
 const docs = ["README.md", "CHANGELOG.md", "AGENTS.md", "docs/PUBLISHING.md", "docs/PRIVACY.md",
   "tests/README.md", "scripts/precheck.mjs", "scripts/publish.ps1"];
 const offenders = [];
@@ -40,7 +63,7 @@ const real = offenders.filter(o => !ALLOW.test(o));
 assert.deepEqual(real, [], `这些地方把回归数量写死了，改一个用例就会飘：\n    ${real.join("\n    ")}`);
 console.log(`  ok   文档/脚本里没有写死的回归数量（${docs.length} 个文件扫过）`);
 
-// --- ③ 每个用例文件都得能被单独跑（有 exit 或至少不抛）—— 只查形状，不跑
+// --- ④ 每个用例文件都得能被单独跑（有 exit 或至少不抛）—— 只查形状，不跑
 for (const f of dirTests) {
   const t = fs.readFileSync(rel(path.join("tests", f)), "utf8");
   assert.ok(/process\.exit|PASS|ok\s/.test(t), `${f} 里没有 PASS/exit 迹象，可能不是一个完整用例`);
