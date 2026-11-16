@@ -197,6 +197,50 @@ check("snapshot 返回体里没有 bceUserId 字段", !snapFields.some(l => /bce
 check("inspect 返回的 profiles 映射里没有 bceUserId", !/bceUserId:\s*p\.bceUserId/.test(upstreamText.slice(upstreamText.indexOf("function inspect"))));
 check("诊断/界面里的家目录一律缩成 ~", !/stateFile:\s*stateFile\(\)/.test(indexText) || /tidyPath|homeTilde|replace\(home/.test(indexText));
 
+// 缩写的**形状**也要对：这是设计来整段贴进问题反馈的文本。
+// 之前整串替换后 `~\AppData\Local\…` 不再以 home 开头，tidyPath 不处理它，
+// 于是输出「波浪号配反斜杠」的混排 —— 看着像没脱敏干净，实际脱了，但没人敢确定。
+// 从 index.js 里把真函数抠出来跑，不复制实现（复制一份迟早漂）。
+{
+  const grab = name => {
+    const i = indexText.indexOf(`function ${name}(`);
+    assert.ok(i > 0, `找不到 ${name}，这条没测到`);
+    let depth = 0, end = -1;
+    for (let j = indexText.indexOf("{", i); j < indexText.length; j++) {
+      if (indexText[j] === "{") depth++;
+      else if (indexText[j] === "}") { depth--; if (depth === 0) { end = j + 1; break; } }
+    }
+    return indexText.slice(i, end);
+  };
+  const src = `
+    const os = require("os");
+    const homePrefix = () => os.homedir() || "";
+    ${grab("tidyPath")}
+    ${grab("tidyText")}
+    module.exports = { tidyPath, tidyText };
+  `;
+  const tmpMod = path.join(os.tmpdir(), `tidy-shape-${Date.now()}.cjs`);
+  fs.writeFileSync(tmpMod, src);
+  const { tidyText, tidyPath } = require(tmpMod);
+  fs.rmSync(tmpMod, { force: true });
+  const home = os.homedir();
+  const cases = [
+    [`${home}\\AppData\\Local\\Temp\\x`, "~/AppData/Local/Temp/x"],
+    [`找过这些地方：${home}\\AppData\\Roaming\\qianfan-desktop-app`, "找过这些地方：~/AppData/Roaming/qianfan-desktop-app"],
+    [`EPERM: rename '${home}\\.dsh\\dumate-state.json'`, "EPERM: rename '~/.dsh/dumate-state.json'"],
+  ];
+  for (const [input, want] of cases) {
+    const got = tidyText(input);
+    assert.equal(got, want, `缩写形状不对：${got}`);
+    assert.ok(!got.includes(home), `还留着家目录：${got}`);
+    assert.ok(!/~\\/.test(got), `波浪号后还配反斜杠：${got}`);
+  }
+  // 正文里的反斜杠不许动（那是正则示例/转义说明，改了反而错）
+  const prose = tidyText("示例 \\d+\\w 与 C:\\\\Windows 无关");
+  assert.ok(prose.includes("\\d+\\w"), `正文反斜杠被改了：${prose}`);
+  check("家目录缩写形状统一成 ~/，正文反斜杠不受影响", true);
+}
+
 // ---------------------------------------------------------------- ③ 发布完整性
 check("没有 private:true（它会挡住发布）", pkg.private !== true, `private=${pkg.private}`);
 check("license = MIT", pkg.license === "MIT", pkg.license);
