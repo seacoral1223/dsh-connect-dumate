@@ -608,6 +608,11 @@ export function apply(ctx, config = {}) {
   /**
    * 宿主（DSH）版本号。取法按可靠性依次尝试，**取不到就明说取不到** ——
    * 诊断里写一个猜的版本号比空着更坏：别人照着排查会排错方向。
+   *
+   * 注意这些候选**只有在宿主进程里才全部可用**：普通 node 读不到 app.asar，
+   * 而插件跑在 Electron 里、fs 是被打过补丁的，所以 asar 路径在这里能成。
+   * 另外 DSH 至今全部版本都是预发布（-rc.N / -alpha.N），profile 的 package.json
+   * 里没有 version，别指望它。
    */
   function hostVersion() {
     const tries = [
@@ -615,6 +620,13 @@ export function apply(ctx, config = {}) {
       () => ctx.root?.meta?.version,
       () => ctx.fiber?.app?.meta?.version,
       () => process.env.DSH_VERSION,
+      // 随包安装的 base 包：它的 version 就是宿主版本（list_bundles 里能看到同一个值）
+      () => require(path.join(process.env.DSH_INSTALL_DIR || "", "package.json")).version,
+      () => {
+        const p = path.join(process.env.DSH_PROFILE_DIR || "", "node_modules", "@deepseek-ai", "dsh-base", "package.json");
+        return p.length > 40 ? JSON.parse(fs.readFileSync(p, "utf8")).version : null;
+      },
+      () => JSON.parse(fs.readFileSync(path.join(process.env.DSH_INSTALL_DIR || "", "..", "package.json"), "utf8")).version,
     ];
     for (const t of tries) {
       try { const v = t(); if (typeof v === "string" && v) return v; } catch { /* 换下一个 */ }
