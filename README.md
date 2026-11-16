@@ -12,7 +12,7 @@
 
 ```powershell
 # ① 下载并解压（Windows 10/11 自带 tar；macOS / Linux 同命令）
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.24
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.25
 tar -xzf dumate.tgz
 # 解压出来是一个目录：dsh-connect-dumate-0.9.16
 ```
@@ -21,7 +21,7 @@ tar -xzf dumate.tgz
 **③** **重启 DSH**（必须重启，否则新的 JS 世代不会加载 —— 这是"装完看不见东西"的头号原因）
 
 > ⚠️ **不要用 `npm i -g`。** 全局安装不会把 bundle 注册进 DSH 的 profile，装完看不到东西是必然的 —— 网上不少教程会那么写，那是错的。
-> 会用 git 的话也可以：`git clone --branch v0.9.24 https://github.com/seacoral1223/dsh-connect-dumate.git`，然后同样 Add plugin 选那个目录。
+> 会用 git 的话也可以：`git clone --branch v0.9.25 https://github.com/seacoral1223/dsh-connect-dumate.git`，然后同样 Add plugin 选那个目录。
 
 ### 装好后应该看到这四样
 
@@ -36,7 +36,7 @@ tar -xzf dumate.tgz
 
 ## 停止维护，以及为什么
 
-做到 v0.9.24 就到这里了。不是因为做完了，是因为**碰到了天花板，而天花板不在我能力范围内**：
+做到 v0.9.25 就到这里了。不是因为做完了，是因为**碰到了天花板，而天花板不在我能力范围内**：
 
 - **上游账号级限流绕不过去。** 实测约 10 次请求/分钟，与请求体量无关、与选哪个模型无关
   （撞的那次正是跨 5 个模型时发生的，所以「限流时自动换模型」这个方案实测无效）。
