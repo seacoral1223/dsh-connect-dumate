@@ -134,6 +134,32 @@ assert.ok(!/bce-sessionid=[A-Za-z0-9]/.test(logText), "日志里出现了 cookie
 for (const s of secrets) assert.ok(!logText.includes(s), "日志里出现了本机标识");
 console.log(`  ok   ${logs.length} 条日志里没有凭据、没有本机标识`);
 
+// --- ⑤ 版本号不能撒谎：诊断里的「插件版本」必须是**内存里正在跑的那一代**，
+// 而不是每次从磁盘重读。否则「文件已更新但没重启」时会报最新版，把人引向
+// 「显示最新版怎么还有这个 bug」的死胡同（这个坑是实测到的：外部读到的版本号
+// 一直跟着磁盘走，根本判断不出有没有重启）。
+{
+  const pkgPath = path.join(import.meta.dirname, "..", "package.json");
+  const original = fs.readFileSync(pkgPath, "utf8");
+  const rowOf = (s, key) => (s.checks ?? []).find(r => r[0] === key)?.[1];
+  try {
+    // 把磁盘上的版本改成明显不同的值，再看诊断
+    const bumped = JSON.parse(original);
+    bumped.version = "9.9.9-磁盘版";
+    fs.writeFileSync(pkgPath, JSON.stringify(bumped, null, 2) + "\n");
+    const s = await (await routes.get("/api/dumate/state").resource(new Request("http://x/api/dumate/state"))).json();
+    const loaded = rowOf(s, "插件版本");
+    const disk = rowOf(s, "磁盘上的版本");
+    assert.equal(loaded, original && JSON.parse(original).version,
+      `「插件版本」跟着磁盘变了（=${loaded}）—— 那它无法回答"我重启了没有"这个问题`);
+    assert.equal(disk, "9.9.9-磁盘版", "「磁盘上的版本」应当如实反映磁盘");
+    assert.ok(rowOf(s, "⚠ 需要重启"), "两者不一致时必须显式提示需要重启");
+    console.log(`  ok   版本诊断诚实：加载版=${loaded} / 磁盘版=${disk}，不一致时提示重启`);
+  } finally {
+    fs.writeFileSync(pkgPath, original);
+  }
+}
+
 for (const d of disposers.slice().reverse()) { try { await d(); } catch { /* 卸载失败不影响结论 */ } }
 fs.rmSync(SANDBOX, { recursive: true, force: true });
 console.log("\nPASS：HTTP 面乱参数不崩不外泄；key 校验与显示名上限都挡住");

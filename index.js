@@ -224,13 +224,26 @@ function labelFor(key, toggles) {
   return { name: `${main} (${key})`, source: "upstream" };
 }
 
-function bundleVersion() {
+// 版本号在**模块加载时取一次**并冻结。
+// 原先每次调用都从磁盘重读 package.json —— 于是「文件已更新但还没重启」时
+// 诊断会报 0.9.19，而内存里跑的仍是 0.9.16：这句话是假的，而且会把人引向
+// 「明明显示最新版怎么还有这个 bug」的死胡同。模块只在重启时重新加载，
+// 所以加载时的值就是真正在跑的那一代。
+const LOADED_VERSION = (() => {
   // 归属头里的版本号必须来自清单本身，不能靠手改常量（改一次忘一次，最后发给上游的是谎话）
   try {
     const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
     return JSON.parse(fs.readFileSync(path.join(here, "package.json"), "utf8")).version ?? "";
   } catch { return ""; }
+})();
+// 磁盘上的版本另取一份，两者不一致就说明「改了代码没重启」—— 这本身是要显示出来的信息
+function diskVersion() {
+  try {
+    const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    return JSON.parse(fs.readFileSync(path.join(here, "package.json"), "utf8")).version ?? "";
+  } catch { return ""; }
 }
+function bundleVersion() { return LOADED_VERSION; }
 
 /** 本机当天的日期串（签到按天判断用，走本地时区不是 UTC）。 */
 function localDateKey(d = new Date()) {
@@ -652,6 +665,12 @@ export function apply(ctx, config = {}) {
       // 原先整张表没有版本，只有归属头里带了版本号（用户看不见），
       // 于是"我这版对不对"这个问题答不出来 —— WorkBuddy 专门为此写了一节。
       ["插件版本", bundleVersion()],
+      // 加载版本与磁盘版本不一致 = 代码改了但没重启。这个信息以前只能靠人猜，
+      // 而「显示最新版却有旧 bug」正是最容易把人绕死的一种现场。
+      ["磁盘上的版本", diskVersion()],
+      ...(diskVersion() && diskVersion() !== bundleVersion()
+        ? [["⚠ 需要重启", `磁盘已是 ${diskVersion()}，内存里跑的是 ${bundleVersion()} —— 改动还没生效，重启 DSH 才会加载新 JS 世代`]]
+        : []),
       ["宿主版本", hostVersion()],
       ["选定模式", `${knobs().mode}（运行期可改；出厂默认来自 patch）`],
       ["实际通道", ch?.channel?.kind === "gateway" ? "云端网关（搭子 App 可以不开）" : ch?.channel?.kind === "local" ? "搭子本地代理" : "无"],
