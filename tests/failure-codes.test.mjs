@@ -78,7 +78,9 @@ for (const [label, status, headers, want] of cases) {
     "带上 HTTP 状态": f.status === status,
     "带上请求号": typeof f.requestId === "string" && f.requestId.startsWith("gd-"),
   };
-  if (status === 429) checks["retry-after 折成毫秒"] = f.providerRetryAfterMs === 7000;
+  // 旧断言写的是「retry-after 折成毫秒」= 原样照搬 7000。那条编码了一个错的策略：
+  // 现网实测 11 秒内的重试必失败，所以低于 15 秒地板的值必须抬起来。
+  if (status === 429) checks["retry-after 7 秒低于地板 → 抬到 15 秒"] = f.providerRetryAfterMs === 15000;
   const fails = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
   if (fails.length) bad++;
   console.log(`${fails.length ? "  FAIL" : "  ok  "} ${label.padEnd(14)} ${f.code ?? "无"}${fails.length ? ` ← ${fails.join("、")}` : ""}`);
@@ -106,7 +108,7 @@ const rules = {
   "STREAM_CLOSED 不重放": !policy.retryableCodes.includes("STREAM_CLOSED"),
   "所有码名都在表里": policy.retryableCodes.every(c => OFFICIAL_CODES.has(c)),
   "重试有上限": policy.mode === "normal" && policy.maxRetries >= 1 && policy.maxRetries <= 4,
-  "最长等待有界": policy.maxDelayMs <= 30000,
+  "最长等待有界": policy.maxDelayMs <= 60000,
 };
 for (const [label, ok] of Object.entries(rules)) { if (!ok) bad++; console.log(`${ok ? "  ok  " : "  FAIL"} 策略：${label}`); }
 s0.close();
@@ -142,38 +144,42 @@ s0.close();
   if (!bad) console.log("  ok   四条文案互不污染分类关键词、不承诺绝对自动重试、AUTH 覆盖两种登录方式");
 }
 
-// retry-after 的边界：providerRetryAfterMs 的规格是**正有限数**，
-// 交一个 0 或非法值会让宿主直接抛 `LlmError providerRetryAfterMs must be a positive finite number`，
-// 一整轮对话崩成 UNKNOWN —— 而 429 本来只是"等一会儿"。
-// 现场就是上游回 `retry-after: 0`（限流窗口刚重置时确实会这样）触发的。
+// retry-after 的形状与限流等待。
+// `providerRetryAfterMs` 的规格是**正有限数**（宿主原话），交出 0 会让整轮崩成 UNKNOWN ——
+// 这是现场截图里那条报错的根因。
+// 但"不给字段"同样不够：现网实测上游经常不带 retry-after，宿主退回 1.5s/3s/6s，
+// 三次尝试只跨 11 秒就放弃，而搭子的用户级窗口比这长得多 → 不崩了但照样失败。
+// 所以新契约：**429 必须给出一个落在 15–60 秒之间的等待**。
 {
   const res = (headers, status = 429) => ({
     status, ok: false,
     headers: { get: k => headers[String(k).toLowerCase()] ?? null },
   });
+  // [标签, 头, 期望等待区间]
   const shapes = [
-    ["retry-after: 0", { "retry-after": "0" }, null],
-    ["retry-after: 0.0001（四舍五入会变 0）", { "retry-after": "0.0001" }, null],
-    ["retry-after: 空串", { "retry-after": "" }, null],
-    ["retry-after: 缺失", {}, null],
-    ["retry-after: HTTP 日期", { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }, null],
-    ["retry-after: 负数", { "retry-after": "-5" }, null],
-    ["retry-after: 荒谬大数", { "retry-after": "999999" }, null],
-    ["retry-after: 6.878（现场那个值）", { "retry-after": "6.878" }, 6878],
-    ["retry-after: 30", { "retry-after": "30" }, 30000],
-    ["retry-after: 1", { "retry-after": "1" }, 1000],
+    ["retry-after: 0（窗口刚重置时上游真会给 0）", { "retry-after": "0" }, 15000, 60000],
+    ["retry-after: 0.0001（round 后会变 0）", { "retry-after": "0.0001" }, 15000, 60000],
+    ["retry-after: 空串", { "retry-after": "" }, 15000, 60000],
+    ["retry-after: 缺失", {}, 15000, 60000],
+    ["retry-after: HTTP 日期", { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }, 15000, 60000],
+    ["retry-after: 负数", { "retry-after": "-5" }, 15000, 60000],
+    ["retry-after: 8 秒（太短，抬到地板）", { "retry-after": "8" }, 15000, 60000],
+    ["retry-after: 6.878（现场那个值）", { "retry-after": "6.878" }, 15000, 60000],
+    ["retry-after: 30（尊重上游）", { "retry-after": "30" }, 30000, 30000],
+    ["retry-after: 400（荒谬大数，压到上限）", { "retry-after": "400" }, 15000, 60000],
   ];
-  for (const [label, headers, want] of shapes) {
+  for (const [label, headers, lo, hi] of shapes) {
     const f = failureFromResponse(res(headers), `{"error":{"code":"user_rate_limit_exceeded"}}`);
-    const got = f.providerRetryAfterMs ?? null;
-    if (got !== want) { bad++; console.log(`  FAIL ${label} → providerRetryAfterMs=${JSON.stringify(got)}（期望 ${JSON.stringify(want)}）`); }
-    // 关键不变式：只要给了这个字段，就必须是正有限数
-    if (got !== null && !(Number.isFinite(got) && got > 0)) {
-      bad++; console.log(`  FAIL ${label} → 给出了非法值 ${got}，宿主会抛 LlmError 让整轮崩`);
-    }
+    const got = f.providerRetryAfterMs;
+    if (!(Number.isFinite(got) && got > 0)) { bad++; console.log(`  FAIL ${label} → ${JSON.stringify(got)} 不是正有限数，宿主会抛错`); continue; }
+    if (got < lo || got > hi) { bad++; console.log(`  FAIL ${label} → ${got}ms 不在 [${lo},${hi}]`); }
     if (f.code !== "RATE_LIMIT") { bad++; console.log(`  FAIL ${label} → code=${f.code}，429 必须仍是可重试的 RATE_LIMIT`); }
   }
-  if (!bad) console.log("  ok   retry-after 十种形状：非法值一律不给而不是给 0，429 始终判 RATE_LIMIT");
+  // 非限流的 429 之外，别替上游编造等待：503 没给 retry-after 就不该给这个字段
+  const srv = failureFromResponse(res({}, 503), "bad gateway");
+  if (srv.providerRetryAfterMs !== undefined) { bad++; console.log(`  FAIL SERVER 不该自带 providerRetryAfterMs：${srv.providerRetryAfterMs}`); }
+  if (bad) console.log(`  （以上为 retry-after 段的失败）`);
+  else console.log("  ok   retry-after 十种形状：429 一律给出 15–60 秒的合法等待，SERVER 不编造");
 }
 
 console.log(bad ? `\nFAIL：${bad} 条不对` : "\nPASS：失败码全部落在 dsh-llm 官方表内，429 会退避重试，AUTH/QUOTA/半截流不重试");
