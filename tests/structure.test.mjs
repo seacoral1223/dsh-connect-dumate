@@ -54,7 +54,8 @@ for (const d of docs) {
   const p = rel(d);
   if (!fs.existsSync(p)) continue;
   fs.readFileSync(p, "utf8").split(/\r?\n/).forEach((line, i) => {
-    if (/(\d+|十二|十三|十四|十五|十六|十七|十八|十九|二十)\s*个\s*(回归|不用 DSH 的回归)/.test(line)) {
+    // 允许中间夹 markdown 强调/空格（`**十五个**不用 DSH 进程的回归` 这种写法曾经绕过检查）
+    if (/(\d+|十二|十三|十四|十五|十六|十七|十八|十九|二十|廿)\s*个[\s*]*?(回归|不用 DSH)/.test(line)) {
       offenders.push(`${d}:${i + 1} → ${line.trim().slice(0, 90)}`);
     }
   });

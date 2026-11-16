@@ -1,5 +1,17 @@
 # 更新记录
 
+## 0.9.18
+
+**这条是修一个我自己造成的、把真实用户锁在门外的回归。** 有朋友装完之后反馈：模型勾选、取消勾选、导入 Cookie、点签到**全部报 `forbidden-origin`**，但读一切正常（他能把 `/dumate doctor` 整段贴出来）。
+
+- **根因**：v0.9.10 我把同源闸门从 fail-open 改成 fail-closed 时，判据写成「Origin 字符串必须等于 `getOrigin()`」。而 `getOrigin()` 只返回**一个**地址（通常 `http://127.0.0.1:<端口>`），用户完全可能用 `http://localhost:<端口>`、局域网 IP 或远程隧道打开同一个 GUI。浏览器对 **GET 不发 Origin、对 POST 必发 Origin** —— 于是「读得到、写全 403」，而且界面只回一个错误码，谁也看不出为什么。
+- **修法**：判据改成 **Origin 的 host 必须等于这个请求自己打到的 Host**（同时从 `headers.host` 与 `request.url` 两处取，因为读口收到的是 Web `Request`、`host` 是 fetch 禁止头名会被 undici 丢掉），并把 `localhost` 与 `127.0.0.1` 视为同一台机器。写口不再要求「必须带 Origin」—— 不带只可能是本机 curl；浏览器**无法**让跨源 POST 不带 Origin，所以 CSRF 仍然被挡。
+- **403 现在自带诊断**：回 `got` / `servedHost` / `ownOrigin`，用户能直接贴出来，不用再互相猜。
+- 新增 `tests/origin-gate.test.mjs`：八组（localhost / 局域网 IP / 隧道域名 / 本机 curl 必须能写；`http://evil.example`、伪造 Origin、端口不匹配必须 403）。反向对照也做了：旧判据确实会拒绝 localhost —— 那正是他被锁在门外的原因。
+- 顺带修了 `tests/structure.test.mjs` 自己的一个漏网：「写死回归数量」的正则匹配不到 `**十五个**不用 DSH 进程的回归` 这种带 markdown 强调的写法，AGENTS 里那条陈旧数字就是这么溜过去的。
+
+**教训（已写进 AGENTS）**：安全加固的判据必须与浏览器的同源模型同构；**用错判据的 fail-closed 比 fail-open 更难发现**，因为它把正常用户变成故障现场，而且是静默的。
+
 ## 0.9.17
 
 **把介绍文字从"排查手册"改成"产品页"** —— 之前 README 第一节就是风险提示，安装说明在第 50 行；而 DSH 插件详情页与市场卡片读的就是开头那段，**第一眼看不到怎么装，就真不会装**。

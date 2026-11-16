@@ -1151,14 +1151,52 @@ export function apply(ctx, config = {}) {
 
   ctx.inject(["webServer"], (scoped) => {
     const ownOrigin = (() => { try { return scoped.webServer.getOrigin(); } catch { return null; } })();
-    const sameOrigin = request => {
-      const reqOrigin = request.headers.get("origin");
-      // 原先是 `return !ownOrigin || reqOrigin === ownOrigin` —— 拿不到自家地址就一律放行，
-      // 属于 fail-open：宿主接口一变，本机任意网页都能读写这个面。
-      // 现在拿不到就只认「根本没带 Origin」的请求（浏览器同源 GET 通常不带，跨源一定带）。
-      if (!ownOrigin) return !reqOrigin;
-      return !reqOrigin || reqOrigin === ownOrigin;
+
+    /**
+     * 同源判定：**拿 Origin 的 host 与「这个请求自己打到的 Host」比**，不是与 getOrigin() 字符串比。
+     *
+     * 这是 v0.9.10 引入的一个真实回归的根因（别人装完反馈：模型勾选、导入 Cookie、签到
+     * 全部报 `forbidden-origin`，而读一切正常）：`getOrigin()` 只返回一个地址
+     * （通常是 `http://127.0.0.1:<端口>`），但用户完全可能用 `http://localhost:<端口>`、
+     * 局域网 IP 或远程隧道打开同一个 GUI。浏览器对 **GET 不发 Origin、对 POST 必发 Origin**，
+     * 于是「读得到、写全 403」—— 字符串相等这个判据本身就错了。
+     *
+     * Origin-vs-请求 Host 才是浏览器同源模型的定义，且天然兼容 localhost / LAN / 隧道 / 反代；
+     * 而恶意本地网页**无法**伪造或不发 Origin（跨源 POST 必带 Origin），所以它照样挡住 CSRF。
+     */
+    const normHost = h => {
+      let s = String(h ?? "").trim().toLowerCase().replace(/\.$/, "");
+      if (s.startsWith("http://") || s.startsWith("https://")) { try { s = new URL(s).host; } catch { /* 原样 */ } }
+      // localhost 与 127.0.0.1 在浏览器眼里是两个 origin，但对这台机器上的服务是同一个地方
+      s = s.replace(/^localhost(:|$)/, "127.0.0.1$1");
+      s = s.replace(/^\[::1\](:|$)/, "[::1]$1");
+      return s;
     };
+    const hostOf = u => { try { return normHost(new URL(u).host); } catch { return ""; } };
+    const ownHost = ownOrigin ? hostOf(ownOrigin) : "";
+    // 读口收到的是 Web Request（headers.get），写口收到的是 Node 风格 req（普通对象）。
+    // 只按一种形状取值，另一种就会当场抛 —— 这里两种都吃。
+    const hdr = (request, name) => {
+      const h = request?.headers;
+      if (!h) return null;
+      if (typeof h.get === "function") { try { return h.get(name); } catch { return null; } }
+      const keys = Object.keys(h).find(k => k.toLowerCase() === String(name).toLowerCase());
+      return keys ? h[keys] : null;
+    };
+
+    const originAllowed = request => {
+      const reqOrigin = hdr(request, "origin");
+      // 同源 GET 通常不带 Origin；非浏览器本机客户端（curl 等）也不带。
+      // 浏览器**不可能**让一个跨源 POST 不带 Origin，所以「没带」只可能是本机直连，放行。
+      if (!reqOrigin) return true;
+      const h = hostOf(reqOrigin);
+      if (!h) return false;                       // Origin 存在但解析不了 = 不是正常浏览器请求
+      // 判据来源取全部：Node 风格 req 有 host 头；Web Request 的 host 头是 fetch 禁止头名，
+      // undici 会直接丢掉它 —— 那种情况下只能靠 request.url 的 host。少一条路就会误拒。
+      const hosts = [normHost(hdr(request, "host")), hostOf(request?.url), ownHost].filter(Boolean);
+      return hosts.includes(h);
+    };
+
     const json = (value, status = 200) => new Response(JSON.stringify(value), {
       status, headers: { "Content-Type": "application/json; charset=utf-8" },
     });
@@ -1166,9 +1204,9 @@ export function apply(ctx, config = {}) {
     const disposeState = scoped.webServer.register({
       kind: "exact",
       path: "/api/dumate/state",
-      resource: async request => (sameOrigin(request)
+      resource: async request => (originAllowed(request)
         ? json(await snapshot(new URL(request.url, "http://local").searchParams.get("view")))
-        : json({ error: "forbidden-origin" }, 403)),
+        : json({ error: "forbidden-origin", hint: `Origin 与本机服务地址不一致（若你用局域网 IP 或隧道访问 DSH，这是正常的，反馈时把这一行贴出来）` }, 403)),
     });
 
     const disposeAction = scoped.webServer.register({      kind: "exact",
@@ -1179,12 +1217,17 @@ export function apply(ctx, config = {}) {
           res.end(JSON.stringify(payload));
         };
         if (req.method !== "POST") return write(405, { ok: false, error: "method-not-allowed" });
-        const originHeader = req.headers.origin;
-        // 写口比读口更严：必须带 Origin 且等于自家地址；**拿不到自家地址就一律拒绝**。
-        // 原先 `originHeader && ownOrigin && …` 在 ownOrigin=null 时直接放过，
-        // 等于宿主接口一变，本机任意网页都能改设置、导入 Cookie、点签到。
-        if (!ownOrigin) return write(403, { ok: false, error: "forbidden-origin", hint: "暂时取不到 DSH 自己的地址，为避免本机任意网页都能写，这个面先关着" });
-        if (!originHeader || originHeader !== ownOrigin) return write(403, { ok: false, error: "forbidden-origin" });
+        const originHeader = hdr(req, "origin");
+        // 写口的判据同读口：**Origin 的 host 必须等于这个请求打到的 Host**。
+        // 不再要求「必须带 Origin」—— 浏览器跨源 POST 一定带 Origin，所以「没带」只可能是
+        // 本机 curl 这类非浏览器客户端；把它们拒掉正是上一版把用户锁在门外的原因之一。
+        if (!originAllowed(req)) {
+          return write(403, {
+            ok: false, error: "forbidden-origin",
+            hint: "写操作要求请求的来源与本机服务地址一致。若你用局域网 IP、localhost 或隧道打开 DSH，请把下面这行原样反馈：",
+            got: originHeader ?? "(不带 Origin)", servedHost: normHost(hdr(req, "host")), ownOrigin: ownOrigin ?? "(取不到)",
+          });
+        }
         let body;
         try { const raw = await readBody(req); body = raw ? JSON.parse(raw) : {}; }
         catch { return write(400, { ok: false, error: "bad-json" }); }

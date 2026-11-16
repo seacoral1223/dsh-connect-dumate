@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-dumate",
   "displayName": "DSH Connect DuMate",
-  "version": "0.9.17",
+  "version": "0.9.18",
   "description": "把你已登录的百度搭子（DuMate）变成 DSH 的模型供应商：模型进选择器、对话默认走云端网关（App 不用开着）、积分余额/消耗/每日签到作只读读数挂在输入框上。支持桌面版登录态或手动导入两个 Cookie 两种登录方式。",
   "keywords": [
     "dsh-plugin",
@@ -32,7 +32,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "test": "node tests/adapter-offline.test.mjs && node tests/failure-codes.test.mjs && node tests/credits-parse.test.mjs && node tests/version-fence.test.mjs && node tests/lifecycle.test.mjs && node tests/coldstart.test.mjs && node tests/fresh-machine.test.mjs && node tests/foreign-machine.test.mjs && node tests/machine-variants.test.mjs && node tests/save-rollback.test.mjs && node tests/claim-dedup.test.mjs && node tests/client-structure.test.mjs && node tests/pill-visibility.test.mjs && node tests/defaults.test.mjs && node tests/disabled.test.mjs && node tests/manual-login.test.mjs && node tests/http-robustness.test.mjs && node tests/portable.test.mjs && node tests/structure.test.mjs",
+    "test": "node tests/adapter-offline.test.mjs && node tests/failure-codes.test.mjs && node tests/credits-parse.test.mjs && node tests/version-fence.test.mjs && node tests/lifecycle.test.mjs && node tests/coldstart.test.mjs && node tests/fresh-machine.test.mjs && node tests/foreign-machine.test.mjs && node tests/machine-variants.test.mjs && node tests/save-rollback.test.mjs && node tests/claim-dedup.test.mjs && node tests/client-structure.test.mjs && node tests/pill-visibility.test.mjs && node tests/defaults.test.mjs && node tests/disabled.test.mjs && node tests/manual-login.test.mjs && node tests/origin-gate.test.mjs && node tests/http-robustness.test.mjs && node tests/portable.test.mjs && node tests/structure.test.mjs",
     "check": "node --check index.js && node --check client.js && node --check lib/adapter.js && node --check src/upstream.cjs && npm test",
     "publish:check": "node scripts/precheck.mjs",
     "prepublishOnly": "npm run check",
