@@ -10,7 +10,7 @@
 
 ```powershell
 # ① 下载并解压（Windows 10/11 自带 tar；macOS / Linux 同命令）
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.20
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.21
 tar -xzf dumate.tgz
 # 解压出来是一个目录：dsh-connect-dumate-0.9.16
 ```
@@ -19,7 +19,7 @@ tar -xzf dumate.tgz
 **③** **重启 DSH**（必须重启，否则新的 JS 世代不会加载 —— 这是"装完看不见东西"的头号原因）
 
 > ⚠️ **不要用 `npm i -g`。** 全局安装不会把 bundle 注册进 DSH 的 profile，装完看不到东西是必然的 —— 网上不少教程会那么写，那是错的。
-> 会用 git 的话也可以：`git clone --branch v0.9.20 https://github.com/seacoral1223/dsh-connect-dumate.git`，然后同样 Add plugin 选那个目录。
+> 会用 git 的话也可以：`git clone --branch v0.9.21 https://github.com/seacoral1223/dsh-connect-dumate.git`，然后同样 Add plugin 选那个目录。
 
 ### 装好后应该看到这四样
 

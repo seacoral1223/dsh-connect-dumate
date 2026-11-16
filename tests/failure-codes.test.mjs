@@ -9,7 +9,7 @@
 // DSH 升级后如果改名，这个测试会告诉我们哪些码失效了。
 import http from "node:http";
 import assert from "node:assert/strict";
-import { DuMateAdapter, readableFailure } from "../lib/adapter.js";
+import { DuMateAdapter, readableFailure, failureFromResponse } from "../lib/adapter.js";
 
 const OFFICIAL_CODES = new Set([
   "ABORTED", "ACCOUNT_QUOTA", "ACCOUNT_SIGN_IN_REQUIRED", "ACCOUNT_TOKEN_INVALID", "AUTH",
@@ -140,6 +140,40 @@ s0.close();
   // AUTH 必须同时给两条出路：只说"重新登录"对应不上方式二（手动 Cookie）的用户
   if (!/Cookie/.test(texts.AUTH)) { bad++; console.log(`  FAIL AUTH 文案没覆盖手动导入那条路：${texts.AUTH}`); }
   if (!bad) console.log("  ok   四条文案互不污染分类关键词、不承诺绝对自动重试、AUTH 覆盖两种登录方式");
+}
+
+// retry-after 的边界：providerRetryAfterMs 的规格是**正有限数**，
+// 交一个 0 或非法值会让宿主直接抛 `LlmError providerRetryAfterMs must be a positive finite number`，
+// 一整轮对话崩成 UNKNOWN —— 而 429 本来只是"等一会儿"。
+// 现场就是上游回 `retry-after: 0`（限流窗口刚重置时确实会这样）触发的。
+{
+  const res = (headers, status = 429) => ({
+    status, ok: false,
+    headers: { get: k => headers[String(k).toLowerCase()] ?? null },
+  });
+  const shapes = [
+    ["retry-after: 0", { "retry-after": "0" }, null],
+    ["retry-after: 0.0001（四舍五入会变 0）", { "retry-after": "0.0001" }, null],
+    ["retry-after: 空串", { "retry-after": "" }, null],
+    ["retry-after: 缺失", {}, null],
+    ["retry-after: HTTP 日期", { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }, null],
+    ["retry-after: 负数", { "retry-after": "-5" }, null],
+    ["retry-after: 荒谬大数", { "retry-after": "999999" }, null],
+    ["retry-after: 6.878（现场那个值）", { "retry-after": "6.878" }, 6878],
+    ["retry-after: 30", { "retry-after": "30" }, 30000],
+    ["retry-after: 1", { "retry-after": "1" }, 1000],
+  ];
+  for (const [label, headers, want] of shapes) {
+    const f = failureFromResponse(res(headers), `{"error":{"code":"user_rate_limit_exceeded"}}`);
+    const got = f.providerRetryAfterMs ?? null;
+    if (got !== want) { bad++; console.log(`  FAIL ${label} → providerRetryAfterMs=${JSON.stringify(got)}（期望 ${JSON.stringify(want)}）`); }
+    // 关键不变式：只要给了这个字段，就必须是正有限数
+    if (got !== null && !(Number.isFinite(got) && got > 0)) {
+      bad++; console.log(`  FAIL ${label} → 给出了非法值 ${got}，宿主会抛 LlmError 让整轮崩`);
+    }
+    if (f.code !== "RATE_LIMIT") { bad++; console.log(`  FAIL ${label} → code=${f.code}，429 必须仍是可重试的 RATE_LIMIT`); }
+  }
+  if (!bad) console.log("  ok   retry-after 十种形状：非法值一律不给而不是给 0，429 始终判 RATE_LIMIT");
 }
 
 console.log(bad ? `\nFAIL：${bad} 条不对` : "\nPASS：失败码全部落在 dsh-llm 官方表内，429 会退避重试，AUTH/QUOTA/半截流不重试");
