@@ -6,7 +6,7 @@
 
 ```powershell
 # ① 下载并解压（Windows 10/11 自带 tar；macOS / Linux 同命令）
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.18
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.19
 tar -xzf dumate.tgz
 # 解压出来是目录：dsh-connect-dumate-0.9.17
 ```
@@ -15,7 +15,7 @@ tar -xzf dumate.tgz
 **③** **重启 DSH**（不重启就是"装了但什么都没有"的头号原因）
 
 > ⚠️ 不要用 `npm i -g`：全局安装不会把 bundle 注册进 DSH 的 profile。
-> 会用 git 也可以：`git clone --branch v0.9.18 https://github.com/seacoral1223/dsh-connect-dumate.git`
+> 会用 git 也可以：`git clone --branch v0.9.19 https://github.com/seacoral1223/dsh-connect-dumate.git`
 
 ## 装好后应该看到这四样
 
@@ -36,7 +36,7 @@ tar -xzf dumate.tgz
 
 ## 这个版本修了什么
 
-- **修一个把用户锁在门外的问题**：之前用 `localhost`、局域网 IP 或隧道打开 DSH 的人，模型勾选、导入 Cookie、点签到会全部报 `forbidden-origin`（读正常、写全 403）。现在按浏览器的同源规则判定（Origin 对请求 Host），三种访问方式都能用。
+- **修一个把用户锁在门外的问题**：桌面端界面的写请求不带 `Origin`（或带 Electron 壳的 `app://app` / 沙箱的 `null`），旧判据把这些当成非法来源，于是模型勾选、改名、导入 Cookie、签到全部报 `forbidden-origin`，而读一切正常。现在按浏览器同源规则判定（Origin 对请求 Host），并放行应用自身的源；外部站点的跨源请求仍然 403。
 - 新用户机上的 `npm test` 不再因为没装搭子 App 而失败。
 - 诊断与写操作的 403 现在自带可反馈的细节。
 

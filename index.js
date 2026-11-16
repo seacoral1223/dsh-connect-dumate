@@ -1184,11 +1184,25 @@ export function apply(ctx, config = {}) {
       return keys ? h[keys] : null;
     };
 
+    // Electron 桌面壳的自有源：第二台机器实测过界面的写请求**根本不带 Origin**，
+    // 而某些加载形态下带的是壳协议或沙箱 iframe 的字面量 null。
+    // 这三种都必须放行，否则桌面端用户照样被锁在门外（v0.9.18 就漏了这个，
+    // 由对方的修复报告补上 —— 他的探针比我远程猜测更可信）。
+    const SHELL_ORIGINS = new Set(["app://app", "app://shell", "null"]);
+    // 放行 `Origin: null` 的安全依据（不是"反正本机服务没人打"这种安慰）：
+    //   ① 本接口只吃 application/json，跨站 JSON POST 必然触发 CORS 预检，
+    //      而这里不回答 OPTIONS，浏览器根本发不到业务逻辑；
+    //   ② 表单式简单请求（x-www-form-urlencoded / text/plain）不过 JSON.parse 这一关；
+    //   ③ 真能不带 Origin 打到这里的只有本机进程 —— 而它本来就能直接读写
+    //      ~/.dsh/dumate-state.json，拦它没有实际收益，只会拦住自家界面。
+    const isShellOrigin = v => SHELL_ORIGINS.has(String(v).trim().toLowerCase());
+
     const originAllowed = request => {
       const reqOrigin = hdr(request, "origin");
       // 同源 GET 通常不带 Origin；非浏览器本机客户端（curl 等）也不带。
       // 浏览器**不可能**让一个跨源 POST 不带 Origin，所以「没带」只可能是本机直连，放行。
       if (!reqOrigin) return true;
+      if (isShellOrigin(reqOrigin)) return true;
       const h = hostOf(reqOrigin);
       if (!h) return false;                       // Origin 存在但解析不了 = 不是正常浏览器请求
       // 判据来源取全部：Node 风格 req 有 host 头；Web Request 的 host 头是 fetch 禁止头名，
