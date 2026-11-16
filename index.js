@@ -43,6 +43,9 @@ function tidyText(t) {
   let s = String(t ?? "");
   // home 为空时什么都不做 —— 原先 new RegExp("", "g") 会在每个字符前插一个 ~，整句报废
   if (home) s = s.replace(new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "~");
+  // 整串替换后 `~\Users…` 已经不以 home 开头，tidyPath 不会再动它 ——
+  // 于是输出成 `~\AppData\Local\…` 这种「波浪号配反斜杠」的混排。统一成 `~/`。
+  s = s.replace(/~\\/g, "~/");
   return tidyPath(s);
 }
 
