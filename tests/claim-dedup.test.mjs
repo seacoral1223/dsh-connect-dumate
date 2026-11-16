@@ -40,6 +40,7 @@ let gets = 0;
 // 永远测不到（原先假上游恒返回空数组，第二次签到自然又发了一次 POST，
 // 看起来像去重失效，其实是测试自己没模拟出"已领过"的世界）。
 const signedDays = [];
+let grantOnClaim = true;   // false = 上游接受请求但签到读数不动（用来验"假确认"）
 const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const real = globalThis.fetch;
 globalThis.fetch = async (url, opts = {}) => {
@@ -51,7 +52,7 @@ globalThis.fetch = async (url, opts = {}) => {
     && String(opts?.method ?? "GET").toUpperCase() === "POST";
   if (isClaimPost) {
     posts++;
-    signedDays.push(localDay());
+    if (grantOnClaim) signedDays.push(localDay());
     return new Response(JSON.stringify({ success: true, result: true }), { status: 200, headers: { "content-type": "application/json" } });
   }
   if (u.includes("console.bce.baidu.com")) {
@@ -127,6 +128,26 @@ posts = 0;
 await action({ action: "claim" });
 assert.equal(posts, 1, `昨天签过不该挡住今天（实际发了 ${posts} 次）`);
 console.log("  ok   昨天的签到读数不会挡住今天的领取");
+
+// --- ④ 上游"接受"了但没到账：必须报"没核实到账"，不能报成功
+// （融合自 dsh-connect-dumate-points 的做法：Never report a claim we cannot see。
+//   `loginBonus` 回 `result: true` 只代表调用被接受，不代表奖励到账。）
+{
+  grantOnClaim = false;                 // 上游收下请求，但签到读数一动不动
+  signedDays.length = 0;
+  // 先把缓存刷成"今天没领"，否则会被上面那条当日短路拦住 ——
+  // 短路本身是对的（上一用例真的领过了），但那样测不到"接受而未到账"这条路。
+  await action({ action: "refresh" });
+  posts = 0;
+  const r = await action({ action: "claim" });
+  assert.equal(r.ok, true, `接口成功了，回执该是 ok：${r.error}`);
+  assert.equal(r.accepted, true, "上游确实接受了");
+  assert.equal(r.claimed, false, `上游接受了但状态没变，claimed 竟报 ${r.claimed} —— 这就是假确认`);
+  assert.equal(r.granted, false, "granted 必须与 claimed 一致，不能还停在「接口说 true 就算领了」");
+  assert.ok(!/签到成功|已到账/.test(r.note ?? ""), `note 不能承诺到账：${r.note}`);
+  console.log("  ok   上游接受了但读数没变 → claimed=false，note 不承诺到账");
+  grantOnClaim = true;
+}
 
 globalThis.fetch = real;
 for (const d of disposers.slice().reverse()) { try { await d(); } catch { /* 卸载失败不影响结论 */ } }

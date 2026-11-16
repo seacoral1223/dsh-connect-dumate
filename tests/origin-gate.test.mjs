@@ -57,9 +57,9 @@ async function callState(headers, host) {
   const res = await routes.get("/api/dumate/state").resource(webRequest(headers, host));
   return { status: res.status, body: await res.json().catch(() => null) };
 }
-async function callAction(headers) {
+async function callAction(headers, body) {
   let out = "", code = 0;
-  await routes.get("/api/dumate/action").handler(nodeRequest(headers), {
+  await routes.get("/api/dumate/action").handler(nodeRequest(headers, body), {
     writeHead: c => { code = c; }, end: s => { out = s; },
   });
   return { status: code, body: JSON.parse(out || "{}") };
@@ -112,6 +112,45 @@ assert.equal(bad, 0, `${bad} 组同源判定不符合预期`);
   assert.ok(w.body.got && w.body.servedHost, `403 要带上 got / servedHost 才好排障：${JSON.stringify(w.body)}`);
   assert.ok(!/evil\.example/.test(JSON.stringify(w.body.hint ?? "")), "hint 里不该回显来源域名以外的东西");
   console.log(`  ok   403 自带诊断：got=${w.body.got} servedHost=${w.body.servedHost}`);
+}
+
+// DNS rebinding：evil.com 解析到 127.0.0.1 时，浏览器会同时带上
+// Host: evil.com 与 Origin: http://evil.com —— 于是「Origin 等于请求 Host」这条
+// 判据自己放过了自己。这是 v0.9.19 判据的真实局限（融合 points 版那层防御时才发现）。
+// compat 是默认值、明知有这个局限（为了不打断局域网/隧道/反代用户）；
+// strict 关掉它。两条都要钉住，否则"有开关"只是文档上的一句话。
+{
+  const rebinding = { origin: "http://evil.example", host: "evil.example" };
+  const w1 = await callAction(rebinding);
+  assert.equal(w1.status, 200, `compat 下 rebinding 形状应当被放行（这是已知取舍）：${w1.status}`);
+  console.log("  ok   compat（默认）：Host 与 Origin 一致的域名形状放行 —— 明知换来反代兼容，代价写在下面");
+
+  // 注意 callAction 的第一个参数是**请求头**，body 是第二个 —— 上一版把 body 塞进了
+  // 头的位置，于是 knobs 根本没执行，而 refresh 照样回 ok:true，
+  // 结果把"我的测试写错了"报成了"strict 是个摆设"。假警报，但值得留着当反例。
+  const set = await callAction({ origin: "http://127.0.0.1:60525", host: "127.0.0.1:60525" },
+    { action: "knobs", originPolicy: "strict" });
+  assert.equal(set.status, 200, `切 strict 的 HTTP 码不对：${set.status}`);
+  // 只看 HTTP 200 不够 —— 这个路由失败时也回 200，靠 body.ok 区分。
+  assert.equal(set.body.ok, true, `切 strict 失败：${JSON.stringify(set.body).slice(0, 200)}`);
+  const w2 = await callAction(rebinding);
+  assert.equal(w2.status, 403, `strict 下 DNS rebinding 形状竟然仍被放行（${w2.status}）—— 那 strict 是个摆设`);
+  console.log("  ok   strict：同一个 rebinding 形状被拒（Host 必须是回环/私网 IP/自家地址）");
+
+  // strict 不能把正常本机访问一起拒掉，否则等于重演 forbidden-origin 那次事故
+  for (const [label, headers] of [
+    ["本机 127.0.0.1", { origin: "http://127.0.0.1:60525", host: "127.0.0.1:60525" }],
+    ["localhost", { origin: "http://localhost:60525", host: "localhost:60525" }],
+    ["局域网 IP", { origin: "http://192.168.1.20:60525", host: "192.168.1.20:60525" }],
+    ["不带 Origin 的本机客户端", { host: "127.0.0.1:60525" }],
+  ]) {
+    const w = await callAction(headers);
+    assert.equal(w.status, 200, `strict 下「${label}」被误拒（${w.status}）—— 那就是又一次把用户锁在门外`);
+  }
+  console.log("  ok   strict 仍然放过 127.0.0.1 / localhost / 局域网 IP / 本机客户端");
+
+  // 切回默认，别影响后面的用例
+  await callAction({ origin: "http://127.0.0.1:60525", host: "127.0.0.1:60525" }, { action: "knobs", originPolicy: "compat" });
 }
 
 fs.rmSync(SANDBOX, { recursive: true, force: true });

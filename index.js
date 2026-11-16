@@ -17,6 +17,7 @@ const DEFAULT_POLL_MS = 5 * 60_000;     // 积分读数刷新间隔
 const POLL_STEPS_MS = [60_000, 5 * 60_000, 10 * 60_000, 30 * 60_000, 60 * 60_000];
 const MODES = new Set(["auto", "gateway", "local"]);
 const AUTH_SOURCES = new Set(["auto", "app", "manual"]);
+const ORIGIN_POLICIES = new Set(["compat", "strict"]);
 
 /** 插件自己的可写状态：勾选、图片开关、显示名覆盖、上游教给我们的真实模型名。 */
 /**
@@ -106,6 +107,7 @@ function defaultToggles() {
     mode: null, pollIntervalMs: null, activeProfileId: null,
     autoCheckIn: false, lastAutoCheckInDate: null,
     manualCookiesCipher: null, manualCookiesAt: 0, manualCookieNames: [], authSource: null,
+    originPolicy: null,
   };
 }
 
@@ -144,7 +146,7 @@ function loadToggles() {
 /** 只比用户真正会改的那几项 —— lastCatalog 之类缓存不参与"是否落盘"的判定。 */
 const COMMITTED_KEYS = ["disabledModels", "routerEnabled", "imageInput", "displayNames",
   "mode", "pollIntervalMs", "activeProfileId", "autoCheckIn",
-  "manualCookiesCipher", "manualCookieNames", "authSource"];
+  "manualCookiesCipher", "manualCookieNames", "authSource", "originPolicy"];
 
 function saveToggles(toggles) {
   const file = stateFile();
@@ -285,6 +287,9 @@ export function apply(ctx, config = {}) {
     profileId: toggles.activeProfileId ?? null,
     autoCheckIn: toggles.autoCheckIn === true,
     authSource: toggles.authSource ?? (AUTH_SOURCES.has(config.authSource) ? config.authSource : "auto"),
+    // 同源策略：compat 兼容局域网/隧道/反代（默认，避免"默默收紧把用户锁在门外"），
+    // strict 只认回环与自家地址（挡住 DNS rebinding，代价是域名访问会被拒）。
+    originPolicy: toggles.originPolicy === "strict" ? "strict" : "compat",
   });
   const runtime = {
     channel: null, channelAt: 0, channelError: null, inflight: null,
@@ -684,12 +689,14 @@ export function apply(ctx, config = {}) {
       ["选择器内启用数", String(enabledCount)],
       ["积分刷新间隔", `${Math.round(knobs().pollIntervalMs / 1000)} 秒`],
       ["最近上游错误", runtime.lastUpstreamError ?? "无"],
-      // 限流是**账号级、按请求条数**算的（实测约 10 次/分钟），界面看不见它就会觉得"莫名其妙不能用"。
+      // 限流是**账号级配额**（阈值上游未公布、我也复现不出稳定数字，别再写死），
+      // 界面看不见它就会觉得"莫名其妙不能用" —— 所以只报真实计数，不报百分比。
       // 把这两格摆出来，一眼能看出是快撞了还是刚撞过。
       ["近 60 秒网关请求", (() => {
         const g = gatewayRateState();
-        const pct = g.approxCapPerMinute ? Math.round((g.callsLast60s / g.approxCapPerMinute) * 100) : null;
-        return `${g.callsLast60s} 次（实测上限约 ${g.approxCapPerMinute} 次/分钟${pct !== null ? `，已用 ${pct}%` : ""}）`;
+        // 只报真实计数。原先还报「实测上限约 N 次/分钟，已用 X%」—— 那个上限复现不了，
+        // 拿一个不知道的量当分母，会让人按不存在的额度做决策。
+        return `${g.callsLast60s} 次`;
       })()],
       ["近 60 秒撞限流", (() => {
         const g = gatewayRateState();
@@ -797,9 +804,33 @@ export function apply(ctx, config = {}) {
       const ch = await refreshChannel({ force: true });
       if (!ch?.cloud) return { ok: false, error: "本机没有可用的百度搭子登录态" };
       try {
-        const granted = await ch.cloud.claimBonus();
+        // **领之前先读一次状态**。上游 `loginBonus` 返回 `result: true` 只说明
+        // 「这次调用被接受了」，不等于奖励到账 —— 把它当"已到账"报就是假确认。
+        // （融合自 dsh-connect-dumate-points 的做法：Never report a claim we cannot see.）
+        const before = await ch.cloud.bonusInfo().catch(() => null);
+        const accepted = await ch.cloud.claimBonus();
         await refreshCredit({ force: true });
-        return { ok: true, granted: granted === true, credit: runtime.credit };
+        const after = runtime.credit?.bonus ?? null;
+        const signedToday = (after?.signInDays ?? []).includes(localDateKey());
+        const flipped = Boolean(after && before
+          && signedToday
+          && !(before.signInDays ?? []).includes(localDateKey()));
+        const grew = Boolean(after && before && Number(after.totalPoints) > Number(before.totalPoints));
+        const claimed = accepted === true && (flipped || grew);
+        return {
+          ok: true,
+          // 保留 granted 这个名字兼容旧客户端，但它的含义现在是**核实过的到账**
+          granted: claimed,
+          accepted: accepted === true,
+          claimed,
+          already: claimed ? false : (signedToday && !flipped),
+          credit: runtime.credit,
+          // 三种话术分开：真到账 / 上游接受了但看不到到账 / 今天本来就领过。
+          // 合成一句「已领取」就是把不确定当成确定来汇报。
+          note: claimed ? "签到成功，奖励已到账（按上游今日签到读数核实）"
+            : accepted === true && after ? "上游接受了这次领取，但签到状态没有变化 —— 以余额与签到读数为准，没有把它报成成功"
+            : "上游没有给出可用的签到状态，无法核实是否到账",
+        };
       } catch (error) {
         return { ok: false, error: tidyText(String(error?.message ?? error)).slice(0, 200) };
       }
@@ -874,6 +905,12 @@ export function apply(ctx, config = {}) {
     if (patch.authSource !== undefined) {
       if (AUTH_SOURCES.has(patch.authSource)) toggles.authSource = patch.authSource;
       else rejected.push(`登录方式只认 ${[...AUTH_SOURCES].join(" / ")}，收到「${String(patch.authSource).slice(0, 24)}」没有应用`);
+    }
+    // 同源策略。默认 compat 而不是 strict：strict 会拒掉域名形式的 Host，
+    // 而反向代理与隧道正是那种访问方式 —— 我自己因"默默收紧"锁住过真实用户一次，不再犯。
+    if (patch.originPolicy !== undefined) {
+      if (ORIGIN_POLICIES.has(patch.originPolicy)) toggles.originPolicy = patch.originPolicy;
+      else rejected.push(`同源策略只认 ${[...ORIGIN_POLICIES].join(" / ")}，收到「${String(patch.originPolicy).slice(0, 24)}」没有应用`);
     }
     const saved = saveToggles(toggles);
     // 不在这里手工回滚：saveToggles 失败时会自己按磁盘内容还原内存（且只在读得到磁盘时还原）。
@@ -1237,8 +1274,21 @@ export function apply(ctx, config = {}) {
       if (!h) return false;                       // Origin 存在但解析不了 = 不是正常浏览器请求
       // 判据来源取全部：Node 风格 req 有 host 头；Web Request 的 host 头是 fetch 禁止头名，
       // undici 会直接丢掉它 —— 那种情况下只能靠 request.url 的 host。少一条路就会误拒。
-      const hosts = [normHost(hdr(request, "host")), hostOf(request?.url), ownHost].filter(Boolean);
-      return hosts.includes(h);
+      const reqHost = normHost(hdr(request, "host"));
+      const hosts = [reqHost, hostOf(request?.url), ownHost].filter(Boolean);
+      if (!hosts.includes(h)) return false;
+      // ↑ 到这一步 Origin 与请求 Host 一致 —— 但**这本身挡不住 DNS rebinding**：
+      //   恶意页面把 evil.com 解析到 127.0.0.1，浏览器就会同时带上 Host: evil.com
+      //   与 Origin: http://evil.com，两者"一致"，于是被放行。
+      //   融合自 dsh-connect-dumate-points 的一层：Host 必须真的是回环/本机监听地址。
+      //   但那条严格规则会打断反向代理与隧道访问（Host 是域名时一律拒），
+      //   而我自己就犯过"默默收紧把正常用户锁在门外"的错，所以这里做成显式开关：
+      //   compat（默认，兼容 LAN/隧道/反代）| strict（只认回环与自家地址）。
+      if (knobs().originPolicy !== "strict") return true;
+      const bare = h.replace(/^\[|\]$/g, "");
+      const isLoopback = bare === "127.0.0.1" || bare === "localhost" || bare === "::1" || /^127\./.test(bare);
+      const isPrivateIp = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(bare);
+      return isLoopback || isPrivateIp || (ownHost && h === ownHost);
     };
 
     const json = (value, status = 200) => new Response(JSON.stringify(value), {
@@ -1284,10 +1334,15 @@ export function apply(ctx, config = {}) {
           }
           if (body.action === "claim") {
             const r = await claimCheckIn();
-            return write(200, r.ok ? { ok: true, granted: r.granted, state: await snapshot() } : { ok: false, error: r.error });
+            // 必须把 accepted / claimed / note 一起透传：只挑 granted 的话，
+            // 「上游接受了但没到账」在界面上就退化成一次普通领取（login 分支犯过同样的错）。
+            return write(200, r.ok
+              ? { ok: true, granted: r.granted, accepted: r.accepted, claimed: r.claimed,
+                  already: r.already, note: r.note, state: await snapshot() }
+              : { ok: false, error: r.error });
           }
           if (body.action === "knobs") {
-            const r = setKnobs({ mode: body.mode, pollIntervalMs: body.pollIntervalMs, activeProfileId: body.activeProfileId, autoCheckIn: body.autoCheckIn });
+            const r = setKnobs({ mode: body.mode, pollIntervalMs: body.pollIntervalMs, activeProfileId: body.activeProfileId, autoCheckIn: body.autoCheckIn, authSource: body.authSource, originPolicy: body.originPolicy });
             if (!r.ok) return write(200, { ok: false, error: r.error });
             await refreshNow();
             return write(200, { ok: true, state: await snapshot() });
