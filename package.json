@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-dumate",
   "displayName": "DSH Connect DuMate",
-  "version": "0.9.23",
+  "version": "0.9.24",
   "description": "把你已登录的百度搭子（DuMate）变成 DSH 的模型供应商：模型进选择器、对话默认走云端网关（App 不用开着）、积分余额/消耗/每日签到作只读读数挂在输入框上。支持桌面版登录态或手动导入两个 Cookie 两种登录方式。",
   "keywords": [
     "dsh-plugin",
@@ -51,7 +51,8 @@
     "LICENSE",
     "docs/PRIVACY.md",
     "tests/*.mjs",
-    "tests/README.md"
+    "tests/README.md",
+    "docs/FOR-FORKERS.md"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0",

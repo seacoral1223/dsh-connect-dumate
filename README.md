@@ -1,5 +1,19 @@
 # 百度搭子（DuMate）接入 DSH
 
+> ## ⚠️ 本项目已停止维护（2026-11-16）
+>
+> **能力有限，到这里为止。** 作者不是专业开发者，做到 v0.9.24 已经碰到天花板：
+> 上游账号级限流（实测约 10 次请求/分钟）无法绕过，账号池/自动换号这些真正能扩容的能力没有实现，
+> macOS 与 Linux 只有单元测试、没有真机，插件市场需要的位图图标与截图也没有做。
+>
+> **代码、文档与全部实测记录都留在仓库里，欢迎二创。**
+> 尤其推荐先读 **[docs/FOR-FORKERS.md](docs/FOR-FORKERS.md)** —— 那里写清了上游接口怎么用、
+> 哪些字段是字符串不是数字、限流到底按什么算、以及十个代价最高的坑（包括几个「看起来能跑」的静默失效）。
+> 这些事实花的时间比代码多，代码会被重构掉，事实不会过期得太快。
+>
+> MIT 许可证，可以随便改、随便闭源。如果你做出了更好的版本，欢迎开个 issue 说一声 ——
+> 不是为了收回去，是想让还在用的人知道往哪走。
+
 **把你已经登录的百度搭子，变成 DSH 里的一个模型供应商。** 模型出现在选择器里可以直接对话，积分余额、消耗明细、每日签到都挂在输入框上 —— 不用在 DSH 和搭子窗口之间来回切。
 
 **桌面版 App 不用开着。** 对话默认走搭子自己的云端模型网关，App 只是提供这台机器上的登录态。
@@ -10,7 +24,7 @@
 
 ```powershell
 # ① 下载并解压（Windows 10/11 自带 tar；macOS / Linux 同命令）
-curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.23
+curl -L -o dumate.tgz https://codeload.github.com/seacoral1223/dsh-connect-dumate/tar.gz/refs/tags/v0.9.24
 tar -xzf dumate.tgz
 # 解压出来是一个目录：dsh-connect-dumate-0.9.16
 ```
@@ -19,7 +33,7 @@ tar -xzf dumate.tgz
 **③** **重启 DSH**（必须重启，否则新的 JS 世代不会加载 —— 这是"装完看不见东西"的头号原因）
 
 > ⚠️ **不要用 `npm i -g`。** 全局安装不会把 bundle 注册进 DSH 的 profile，装完看不到东西是必然的 —— 网上不少教程会那么写，那是错的。
-> 会用 git 的话也可以：`git clone --branch v0.9.23 https://github.com/seacoral1223/dsh-connect-dumate.git`，然后同样 Add plugin 选那个目录。
+> 会用 git 的话也可以：`git clone --branch v0.9.24 https://github.com/seacoral1223/dsh-connect-dumate.git`，然后同样 Add plugin 选那个目录。
 
 ### 装好后应该看到这四样
 
